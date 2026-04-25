@@ -17000,6 +17000,28 @@ function _shufflePhysicsLoop() {
     }
   }
 
+  // Hard screen clamp — tiles cannot leave the visible table area
+  var _clampRect = getRect();
+  var _clampW = _clampRect.width, _clampH = _clampRect.height;
+  for (var i = 0; i < _shufflePhysicsBodies.length; i++) {
+    var b = _shufflePhysicsBodies[i];
+    var hw = (b._shufW || 30) * 0.5, hh = (b._shufH || 60) * 0.5;
+    var clamped = false;
+    if (b.position.x < hw) { Matter.Body.setPosition(b, { x: hw, y: b.position.y }); clamped = true; }
+    if (b.position.x > _clampW - hw) { Matter.Body.setPosition(b, { x: _clampW - hw, y: b.position.y }); clamped = true; }
+    if (b.position.y < hh) { Matter.Body.setPosition(b, { x: b.position.x, y: hh }); clamped = true; }
+    if (b.position.y > _clampH - hh) { Matter.Body.setPosition(b, { x: b.position.x, y: _clampH - hh }); clamped = true; }
+    if (clamped) {
+      // Kill outward velocity component
+      var vx = b.velocity.x, vy = b.velocity.y;
+      if (b.position.x <= hw && vx < 0) vx = 0;
+      if (b.position.x >= _clampW - hw && vx > 0) vx = 0;
+      if (b.position.y <= hh && vy < 0) vy = 0;
+      if (b.position.y >= _clampH - hh && vy > 0) vy = 0;
+      Matter.Body.setVelocity(b, { x: vx * 0.5, y: vy * 0.5 });
+    }
+  }
+
   // Apply grab force from pointer (and mirror point for mouse)
   if (ptr.active) {
     var speed = Math.hypot(ptr.vx, ptr.vy);
