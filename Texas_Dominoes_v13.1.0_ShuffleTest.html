@@ -18012,6 +18012,20 @@ function _startShuffleSandbox() {
     });
     btnBar.appendChild(modeBtn);
 
+    // Add motion toggle button
+    var motionBtn = document.createElement('button');
+    motionBtn.id = 'sandboxMotionBtn';
+    var _motionOn = SHUFFLE_PHYSICS.motionEnabled;
+    motionBtn.textContent = _motionOn ? 'Motion ON' : 'Motion OFF';
+    motionBtn.style.cssText = cBtnStyle + 'background:' + (_motionOn ? 'rgba(168,85,247,0.9)' : 'rgba(100,100,100,0.6)') + ';';
+    motionBtn.addEventListener('click', function() {
+      SHUFFLE_PHYSICS.motionEnabled = !SHUFFLE_PHYSICS.motionEnabled;
+      var on = SHUFFLE_PHYSICS.motionEnabled;
+      motionBtn.textContent = on ? 'Motion ON' : 'Motion OFF';
+      motionBtn.style.background = on ? 'rgba(168,85,247,0.9)' : 'rgba(100,100,100,0.6)';
+    });
+    btnBar.appendChild(motionBtn);
+
     // Add Back to Menu button
     var backBtn = document.createElement('button');
     backBtn.textContent = 'Back';
@@ -18532,16 +18546,24 @@ function _sandboxBindShake() {
     if (SP.tiltGravity && gravAcc) {
       var gx = gravAcc.x || 0;
       var gy = gravAcc.y || 0;
-      // On iOS in portrait: tilting left gives negative x, tilting forward gives negative y
-      // gravity component tells us the tilt angle
-      var tiltForce = SP.tiltStrength * SP.motionSensitivity * 0.15;
+      // On iOS portrait: tilting left = negative x, tilting forward = negative y
+      // Scale so default settings produce clearly visible tile drift
+      var tiltForce = SP.tiltStrength * SP.motionSensitivity * 0.006;
+
+      // Build set of currently grabbed bodies to skip them
+      var grabbedSet = {};
+      var gkeys = Object.keys(_sandboxGrabbedTiles);
+      for (var gi = 0; gi < gkeys.length; gi++) {
+        grabbedSet[_sandboxGrabbedTiles[gkeys[gi]].body.id] = true;
+      }
+      if (_sandboxMouseGrab) grabbedSet[_sandboxMouseGrab.body.id] = true;
+
       for (var i = 0; i < _shufflePhysicsBodies.length; i++) {
         var b = _shufflePhysicsBodies[i];
-        if (b.isStatic) continue;
-        // Apply as a continuous force (additive to current velocity)
+        if (b.isStatic || grabbedSet[b.id]) continue;
         Matter.Body.applyForce(b, b.position, {
-          x: gx * tiltForce * b.mass * 0.001,
-          y: -gy * tiltForce * b.mass * 0.001
+          x: gx * tiltForce * b.mass,
+          y: -gy * tiltForce * b.mass
         });
       }
     }
