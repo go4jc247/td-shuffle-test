@@ -18478,30 +18478,52 @@ var _sandboxShakeLastTime = 0;
 var _sandboxShakeCooldown = 300; // ms between shake bursts
 
 function _sandboxStartShakeDetection() {
-  // Request permission on iOS 13+
-  if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-    // We'll request on first user interaction (button tap etc.)
-    var requestOnce = function() {
-      DeviceMotionEvent.requestPermission().then(function(state) {
-        if (state === 'granted') _sandboxBindShake();
-      }).catch(function() {});
-      document.removeEventListener('touchend', requestOnce);
-    };
-    document.addEventListener('touchend', requestOnce, { once: true });
-  } else if (typeof DeviceMotionEvent !== 'undefined') {
+  if (typeof DeviceMotionEvent === 'undefined') return;
+  // iOS 13+ requires explicit permission
+  if (typeof DeviceMotionEvent.requestPermission === 'function') {
+    DeviceMotionEvent.requestPermission().then(function(state) {
+      if (state === 'granted') _sandboxBindShake();
+    }).catch(function() {
+      // Permission denied or not in user gesture — add a one-shot button
+      var tableEl = document.getElementById('tableMain');
+      var permBtn = document.createElement('button');
+      permBtn.id = 'shakePermBtn';
+      permBtn.textContent = 'Enable Shake';
+      permBtn.style.cssText = 'position:absolute;top:72px;right:10px;z-index:520;color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:11px;font-weight:700;font-family:system-ui,sans-serif;cursor:pointer;background:rgba(168,85,247,0.9);';
+      permBtn.addEventListener('click', function() {
+        DeviceMotionEvent.requestPermission().then(function(state) {
+          if (state === 'granted') _sandboxBindShake();
+        }).catch(function() {});
+        permBtn.remove();
+      });
+      tableEl.appendChild(permBtn);
+    });
+  } else {
     _sandboxBindShake();
   }
 }
 
 function _sandboxBindShake() {
-  var shakeThreshold = 25; // m/s^2 — needs a solid shake
+  var shakeThreshold = 12; // m/s^2 — moderate shake
   _sandboxShakeHandler = function(e) {
     if (!_shuffleSandboxActive || !_shufflePhysicsActive) return;
-    var acc = e.accelerationIncludingGravity;
-    if (!acc) return;
-    var mag = Math.sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
-    // Subtract gravity (~9.8) to get actual shake force
-    var shakeMag = Math.abs(mag - 9.8);
+
+    // Prefer acceleration (gravity removed) if available, fall back to includingGravity
+    var acc = e.acceleration;
+    var useRaw = acc && (acc.x !== null || acc.y !== null || acc.z !== null);
+    if (!useRaw) {
+      acc = e.accelerationIncludingGravity;
+      if (!acc) return;
+    }
+    var ax = acc.x || 0, ay = acc.y || 0, az = acc.z || 0;
+
+    var shakeMag;
+    if (useRaw) {
+      shakeMag = Math.sqrt(ax * ax + ay * ay + az * az);
+    } else {
+      // Subtract gravity from magnitude
+      shakeMag = Math.abs(Math.sqrt(ax * ax + ay * ay + az * az) - 9.8);
+    }
     if (shakeMag < shakeThreshold) return;
 
     var now = performance.now();
@@ -18514,14 +18536,14 @@ function _sandboxBindShake() {
     for (var i = 0; i < _shufflePhysicsBodies.length; i++) {
       var b = _shufflePhysicsBodies[i];
       if (b.isStatic) continue; // skip tiles locked in slots
-      // Use the actual accelerometer direction for realistic feel
-      var vx = (acc.x || 0) * SP.scatterForce * 60 * forceMult;
-      var vy = -(acc.y || 0) * SP.scatterForce * 60 * forceMult; // flip Y for screen coords
-      // Add some randomness
-      vx += (Math.random() - 0.5) * SP.scatterForce * 80 * forceMult;
-      vy += (Math.random() - 0.5) * SP.scatterForce * 80 * forceMult;
+      // Use accelerometer direction for realistic feel
+      var vx = ax * SP.scatterForce * 80 * forceMult;
+      var vy = -ay * SP.scatterForce * 80 * forceMult; // flip Y for screen coords
+      // Add randomness
+      vx += (Math.random() - 0.5) * SP.scatterForce * 100 * forceMult;
+      vy += (Math.random() - 0.5) * SP.scatterForce * 100 * forceMult;
       Matter.Body.setVelocity(b, { x: vx, y: vy });
-      Matter.Body.setAngularVelocity(b, (Math.random() - 0.5) * SP.scatterSpin * 3 * forceMult);
+      Matter.Body.setAngularVelocity(b, (Math.random() - 0.5) * SP.scatterSpin * 4 * forceMult);
     }
   };
   window.addEventListener('devicemotion', _sandboxShakeHandler);
@@ -18532,6 +18554,8 @@ function _sandboxStopShakeDetection() {
     window.removeEventListener('devicemotion', _sandboxShakeHandler);
     _sandboxShakeHandler = null;
   }
+  var permBtn = document.getElementById('shakePermBtn');
+  if (permBtn) permBtn.remove();
 }
 
 function _sandboxAddTouchRings(overlay) {
