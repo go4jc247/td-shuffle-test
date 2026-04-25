@@ -17817,6 +17817,41 @@ function _endShufflePhysics() {
 // Enters a free-play shuffle sandbox from the home screen using the real game sprites.
 // No game flow, no auto-gather — just drag tiles around with full physics + settings.
 var _shuffleSandboxActive = false;
+var _sandboxMode = 'shuffle'; // 'shuffle' or 'pick'
+var _sandboxGrabbedTiles = {}; // touch identifier -> { body, constraint }
+var _sandboxMouseGrab = null; // { body, constraint } for mouse pick mode
+
+// Find the closest physics body to a point, within maxDist pixels
+function _sandboxFindBodyAt(x, y, maxDist) {
+  var best = null, bestD2 = maxDist * maxDist;
+  for (var i = 0; i < _shufflePhysicsBodies.length; i++) {
+    var b = _shufflePhysicsBodies[i];
+    var dx = b.position.x - x, dy = b.position.y - y;
+    var d2 = dx * dx + dy * dy;
+    if (d2 < bestD2) { bestD2 = d2; best = b; }
+  }
+  return best;
+}
+
+// Create a Matter.js constraint that pins a body to a world point
+function _sandboxGrabBody(body, px, py) {
+  var c = Matter.Constraint.create({
+    pointA: { x: px, y: py },
+    bodyB: body,
+    pointB: { x: px - body.position.x, y: py - body.position.y },
+    stiffness: 0.8,
+    damping: 0.1,
+    length: 0
+  });
+  Matter.Composite.add(_shufflePhysicsEngine.world, c);
+  return c;
+}
+
+function _sandboxReleaseGrab(grab) {
+  if (grab && grab.constraint) {
+    Matter.Composite.remove(_shufflePhysicsEngine.world, grab.constraint);
+  }
+}
 
 // Finger-size detection for touch (per-finger grab radius)
 var _sandboxTouchRadiusScale = 3.0;
@@ -17920,6 +17955,29 @@ function _startShuffleSandbox() {
         btns[i].remove();
       }
     }
+    // Add mode toggle button
+    var modeBtn = document.createElement('button');
+    modeBtn.id = 'sandboxModeBtn';
+    modeBtn.textContent = 'Mode: Shuffle';
+    modeBtn.style.cssText = 'color:#fff;border:none;padding:8px 18px;border-radius:8px;font-size:13px;font-weight:700;font-family:system-ui,sans-serif;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,0.4);background:rgba(59,130,246,0.9);';
+    modeBtn.addEventListener('click', function() {
+      if (_sandboxMode === 'shuffle') {
+        _sandboxMode = 'pick';
+        modeBtn.textContent = 'Mode: Pick';
+        modeBtn.style.background = 'rgba(234,179,8,0.9)';
+      } else {
+        _sandboxMode = 'shuffle';
+        modeBtn.textContent = 'Mode: Shuffle';
+        modeBtn.style.background = 'rgba(59,130,246,0.9)';
+      }
+      // Update hint
+      var hint = document.getElementById('shuffleHint');
+      if (hint) hint.textContent = _sandboxMode === 'shuffle'
+        ? 'Shuffle ��� swipe over tiles to push them'
+        : 'Pick — tap a tile to grab it, drag to move';
+    });
+    btnBar.appendChild(modeBtn);
+
     // Add Back to Menu button
     var backBtn = document.createElement('button');
     backBtn.textContent = 'Back to Menu';
@@ -17933,7 +17991,7 @@ function _startShuffleSandbox() {
   // Override hint text
   var hint = document.getElementById('shuffleHint');
   if (hint) {
-    hint.textContent = 'Shuffle Sandbox — drag tiles freely';
+    hint.textContent = 'Shuffle — swipe over tiles to push them';
   }
 
   // Patch touch handlers to use finger-size detection
@@ -17949,59 +18007,112 @@ function _patchSandboxTouchHandlers() {
   overlay.parentNode.replaceChild(newOverlay, overlay);
   newOverlay.id = 'shufflePhysicsOverlay';
 
-  // Re-add mouse handlers (same as original)
+  // Mouse handlers — support both shuffle and pick modes
   var _mouseDown = false;
   newOverlay.addEventListener('mousedown', function(e) {
     _mouseDown = true;
     _shufflePhysicsPointer._isTouch = false;
     var br = newOverlay.getBoundingClientRect();
-    _shufflePhysicsPointer.x = _shufflePhysicsPointer.px = e.clientX - br.left;
-    _shufflePhysicsPointer.y = _shufflePhysicsPointer.py = e.clientY - br.top;
-    _shufflePhysicsPointer.vx = 0; _shufflePhysicsPointer.vy = 0;
-    if (!SHUFFLE_PHYSICS.pushOnHover) _shufflePhysicsPointer.active = true;
-    newOverlay.style.cursor = 'grabbing';
+    var mx = e.clientX - br.left, my = e.clientY - br.top;
+    if (_sandboxMode === 'pick') {
+      var body = _sandboxFindBodyAt(mx, my, 60);
+      if (body) {
+        _sandboxMouseGrab = { body: body, constraint: _sandboxGrabBody(body, mx, my) };
+        newOverlay.style.cursor = 'grabbing';
+      }
+    } else {
+      _shufflePhysicsPointer.x = _shufflePhysicsPointer.px = mx;
+      _shufflePhysicsPointer.y = _shufflePhysicsPointer.py = my;
+      _shufflePhysicsPointer.vx = 0; _shufflePhysicsPointer.vy = 0;
+      if (!SHUFFLE_PHYSICS.pushOnHover) _shufflePhysicsPointer.active = true;
+      newOverlay.style.cursor = 'grabbing';
+    }
   });
   newOverlay.addEventListener('mousemove', function(e) {
     _shufflePhysicsPointer._isTouch = false;
     var br = newOverlay.getBoundingClientRect();
     var nx = e.clientX - br.left, ny = e.clientY - br.top;
-    _shufflePhysicsPointer.vx = nx - _shufflePhysicsPointer.x;
-    _shufflePhysicsPointer.vy = ny - _shufflePhysicsPointer.y;
-    _shufflePhysicsPointer.px = _shufflePhysicsPointer.x;
-    _shufflePhysicsPointer.py = _shufflePhysicsPointer.y;
-    _shufflePhysicsPointer.x = nx; _shufflePhysicsPointer.y = ny;
-    if (SHUFFLE_PHYSICS.pushOnHover || _mouseDown) _shufflePhysicsPointer.active = true;
+    if (_sandboxMode === 'pick' && _sandboxMouseGrab) {
+      _sandboxMouseGrab.constraint.pointA.x = nx;
+      _sandboxMouseGrab.constraint.pointA.y = ny;
+    } else if (_sandboxMode === 'shuffle') {
+      _shufflePhysicsPointer.vx = nx - _shufflePhysicsPointer.x;
+      _shufflePhysicsPointer.vy = ny - _shufflePhysicsPointer.y;
+      _shufflePhysicsPointer.px = _shufflePhysicsPointer.x;
+      _shufflePhysicsPointer.py = _shufflePhysicsPointer.y;
+      _shufflePhysicsPointer.x = nx; _shufflePhysicsPointer.y = ny;
+      if (SHUFFLE_PHYSICS.pushOnHover || _mouseDown) _shufflePhysicsPointer.active = true;
+    }
   });
   newOverlay.addEventListener('mouseup', function() {
     _mouseDown = false;
+    if (_sandboxMouseGrab) {
+      _sandboxReleaseGrab(_sandboxMouseGrab);
+      _sandboxMouseGrab = null;
+    }
     if (!SHUFFLE_PHYSICS.pushOnHover) _shufflePhysicsPointer.active = false;
-    newOverlay.style.cursor = 'crosshair';
+    newOverlay.style.cursor = _sandboxMode === 'pick' ? 'pointer' : 'crosshair';
   });
   newOverlay.addEventListener('mouseleave', function() {
     _mouseDown = false;
+    if (_sandboxMouseGrab) {
+      _sandboxReleaseGrab(_sandboxMouseGrab);
+      _sandboxMouseGrab = null;
+    }
     _shufflePhysicsPointer.active = false;
-    newOverlay.style.cursor = 'crosshair';
+    newOverlay.style.cursor = _sandboxMode === 'pick' ? 'pointer' : 'crosshair';
   });
 
-  // Touch handlers with finger-size detection — unlimited fingers, no auto-gather
+  // Touch handlers — support both shuffle (force fields) and pick (direct grab) modes
   newOverlay.addEventListener('touchstart', function(e) {
     e.preventDefault();
     _shufflePhysicsPointer._isTouch = true;
-    _shufflePhysicsPointer.active = true;
     var br = newOverlay.getBoundingClientRect();
-    for (var ti = 0; ti < e.changedTouches.length; ti++) {
-      var t = e.changedTouches[ti];
-      var tx = t.clientX - br.left, ty = t.clientY - br.top;
-      var grabR = _sandboxGetGrabRadius(t);
-      _shuffleTouchPointers[t.identifier] = {
-        x: tx, y: ty, px: tx, py: ty, vx: 0, vy: 0,
-        grabR: grabR, radiusX: t.radiusX || 0, radiusY: t.radiusY || 0, force: t.force || 0
-      };
+
+    if (_sandboxMode === 'pick') {
+      // Pick mode: find nearest body per finger, create constraint
+      for (var ti = 0; ti < e.changedTouches.length; ti++) {
+        var t = e.changedTouches[ti];
+        var tx = t.clientX - br.left, ty = t.clientY - br.top;
+        var grabR = _sandboxGetGrabRadius(t);
+        var body = _sandboxFindBodyAt(tx, ty, Math.max(grabR, 60));
+        if (body) {
+          // Don't grab a body that's already grabbed by another finger
+          var alreadyGrabbed = false;
+          var gkeys = Object.keys(_sandboxGrabbedTiles);
+          for (var gi = 0; gi < gkeys.length; gi++) {
+            if (_sandboxGrabbedTiles[gkeys[gi]].body === body) { alreadyGrabbed = true; break; }
+          }
+          if (!alreadyGrabbed) {
+            _sandboxGrabbedTiles[t.identifier] = {
+              body: body,
+              constraint: _sandboxGrabBody(body, tx, ty)
+            };
+          }
+        }
+        // Also track in touch pointers for ring visualization
+        _shuffleTouchPointers[t.identifier] = {
+          x: tx, y: ty, px: tx, py: ty, vx: 0, vy: 0,
+          grabR: grabR, radiusX: t.radiusX || 0, radiusY: t.radiusY || 0, force: t.force || 0
+        };
+      }
+    } else {
+      // Shuffle mode: force field pushing
+      _shufflePhysicsPointer.active = true;
+      for (var ti = 0; ti < e.changedTouches.length; ti++) {
+        var t = e.changedTouches[ti];
+        var tx = t.clientX - br.left, ty = t.clientY - br.top;
+        var grabR = _sandboxGetGrabRadius(t);
+        _shuffleTouchPointers[t.identifier] = {
+          x: tx, y: ty, px: tx, py: ty, vx: 0, vy: 0,
+          grabR: grabR, radiusX: t.radiusX || 0, radiusY: t.radiusY || 0, force: t.force || 0
+        };
+      }
+      var first = e.touches[0];
+      _shufflePhysicsPointer.x = _shufflePhysicsPointer.px = first.clientX - br.left;
+      _shufflePhysicsPointer.y = _shufflePhysicsPointer.py = first.clientY - br.top;
+      _shufflePhysicsPointer.vx = 0; _shufflePhysicsPointer.vy = 0;
     }
-    var first = e.touches[0];
-    _shufflePhysicsPointer.x = _shufflePhysicsPointer.px = first.clientX - br.left;
-    _shufflePhysicsPointer.y = _shufflePhysicsPointer.py = first.clientY - br.top;
-    _shufflePhysicsPointer.vx = 0; _shufflePhysicsPointer.vy = 0;
   }, { passive: false });
 
   newOverlay.addEventListener('touchmove', function(e) {
@@ -18009,36 +18120,53 @@ function _patchSandboxTouchHandlers() {
     var br = newOverlay.getBoundingClientRect();
     for (var ti = 0; ti < e.changedTouches.length; ti++) {
       var t = e.changedTouches[ti];
-      var tp = _shuffleTouchPointers[t.identifier];
-      if (!tp) continue;
       var nx = t.clientX - br.left, ny = t.clientY - br.top;
-      tp.vx = nx - tp.x; tp.vy = ny - tp.y;
-      tp.px = tp.x; tp.py = tp.y;
-      tp.x = nx; tp.y = ny;
-      tp.grabR = _sandboxGetGrabRadius(t);
-      tp.radiusX = t.radiusX || 0;
-      tp.radiusY = t.radiusY || 0;
-      tp.force = t.force || 0;
+
+      // Update pick constraint position
+      if (_sandboxMode === 'pick' && _sandboxGrabbedTiles[t.identifier]) {
+        _sandboxGrabbedTiles[t.identifier].constraint.pointA.x = nx;
+        _sandboxGrabbedTiles[t.identifier].constraint.pointA.y = ny;
+      }
+
+      // Update touch pointer (for rings + shuffle force)
+      var tp = _shuffleTouchPointers[t.identifier];
+      if (tp) {
+        tp.vx = nx - tp.x; tp.vy = ny - tp.y;
+        tp.px = tp.x; tp.py = tp.y;
+        tp.x = nx; tp.y = ny;
+        tp.grabR = _sandboxGetGrabRadius(t);
+        tp.radiusX = t.radiusX || 0;
+        tp.radiusY = t.radiusY || 0;
+        tp.force = t.force || 0;
+      }
     }
-    var first = e.touches[0];
-    if (first) {
-      var nx = first.clientX - br.left, ny = first.clientY - br.top;
-      _shufflePhysicsPointer.vx = nx - _shufflePhysicsPointer.x;
-      _shufflePhysicsPointer.vy = ny - _shufflePhysicsPointer.y;
-      _shufflePhysicsPointer.px = _shufflePhysicsPointer.x;
-      _shufflePhysicsPointer.py = _shufflePhysicsPointer.y;
-      _shufflePhysicsPointer.x = nx; _shufflePhysicsPointer.y = ny;
+    // Update primary pointer for shuffle mode
+    if (_sandboxMode === 'shuffle') {
+      var first = e.touches[0];
+      if (first) {
+        var nx = first.clientX - br.left, ny = first.clientY - br.top;
+        _shufflePhysicsPointer.vx = nx - _shufflePhysicsPointer.x;
+        _shufflePhysicsPointer.vy = ny - _shufflePhysicsPointer.y;
+        _shufflePhysicsPointer.px = _shufflePhysicsPointer.x;
+        _shufflePhysicsPointer.py = _shufflePhysicsPointer.y;
+        _shufflePhysicsPointer.x = nx; _shufflePhysicsPointer.y = ny;
+      }
     }
   }, { passive: false });
 
   newOverlay.addEventListener('touchend', function(e) {
     e.preventDefault();
     for (var ti = 0; ti < e.changedTouches.length; ti++) {
-      delete _shuffleTouchPointers[e.changedTouches[ti].identifier];
+      var id = e.changedTouches[ti].identifier;
+      // Release pick constraint
+      if (_sandboxGrabbedTiles[id]) {
+        _sandboxReleaseGrab(_sandboxGrabbedTiles[id]);
+        delete _sandboxGrabbedTiles[id];
+      }
+      delete _shuffleTouchPointers[id];
     }
     if (e.touches.length === 0) {
       _shufflePhysicsPointer.active = false;
-      // No auto-gather in sandbox — tiles stay where they are
     }
   }, { passive: false });
 
@@ -18099,6 +18227,15 @@ function _sandboxAddTouchRings(overlay) {
 
 function _exitShuffleSandbox() {
   _shuffleSandboxActive = false;
+
+  // Release any active pick-mode grabs
+  var gkeys = Object.keys(_sandboxGrabbedTiles);
+  for (var i = 0; i < gkeys.length; i++) {
+    _sandboxReleaseGrab(_sandboxGrabbedTiles[gkeys[i]]);
+  }
+  _sandboxGrabbedTiles = {};
+  _sandboxMouseGrab = null;
+  _sandboxMode = 'shuffle';
 
   // End shuffle physics (cleans up overlay, buttons, settings, physics engine)
   if (_shufflePhysicsActive) {
