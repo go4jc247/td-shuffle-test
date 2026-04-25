@@ -16515,6 +16515,7 @@ var _shufflePhysicsRealSprites = [];
 var _shuffleAreaCenter = { x: 0, y: 0, r: 200 };
 var _shufflePhysicsRAF = null;
 var _shufflePhysicsPointer = { x: 0, y: 0, px: 0, py: 0, vx: 0, vy: 0, active: false };
+var _shuffleTouchPointers = {}; // keyed by touch identifier: { x, y, px, py, vx, vy }
 var _shufflePhysicsResolve = null;
 // Recording system
 var _shuffleRecording = false;
@@ -16989,17 +16990,30 @@ function _shufflePhysicsLoop() {
       var R = SP.grabRadius;
       var R2 = R * R;
 
-      // Build list of force points: primary + mirror (mouse only)
+      // Build list of force points
       var ac = _shuffleAreaCenter;
-      var forcePoints = [{ x: ptr.x, y: ptr.y, vx: ptr.vx, vy: ptr.vy }];
-      // Add 180° mirror for mouse (non-touch) input
-      if (!ptr._isTouch && ac) {
-        forcePoints.push({
-          x: 2 * ac.x - ptr.x,
-          y: 2 * ac.y - ptr.y,
-          vx: -ptr.vx,
-          vy: -ptr.vy
-        });
+      var forcePoints = [];
+      if (ptr._isTouch) {
+        // Touch: use all active touch pointers (real multi-finger input)
+        var touchKeys = Object.keys(_shuffleTouchPointers);
+        for (var tk = 0; tk < touchKeys.length; tk++) {
+          var tp = _shuffleTouchPointers[touchKeys[tk]];
+          forcePoints.push({ x: tp.x, y: tp.y, vx: tp.vx, vy: tp.vy });
+        }
+        if (forcePoints.length === 0) {
+          forcePoints.push({ x: ptr.x, y: ptr.y, vx: ptr.vx, vy: ptr.vy });
+        }
+      } else {
+        // Mouse: primary + 180° mirror
+        forcePoints.push({ x: ptr.x, y: ptr.y, vx: ptr.vx, vy: ptr.vy });
+        if (ac) {
+          forcePoints.push({
+            x: 2 * ac.x - ptr.x,
+            y: 2 * ac.y - ptr.y,
+            vx: -ptr.vx,
+            vy: -ptr.vy
+          });
+        }
       }
 
       for (var fp = 0; fp < forcePoints.length; fp++) {
@@ -17305,39 +17319,62 @@ function _createShuffleUI(rect) {
     _triggerAutoGather();
   });
 
-  // Touch support
+  // Touch support — multi-touch: each finger is an independent force point
   overlay.addEventListener('touchstart', function(e) {
     e.preventDefault();
-    // Cancel any active auto-gather when user starts mixing again
     if (_shuffleGatherActive) _shuffleGatherActive = false;
     _shufflePhysicsPointer._isTouch = true;
-    var br = overlay.getBoundingClientRect();
-    var t = e.changedTouches[0];
     _shufflePhysicsPointer.active = true;
-    _shufflePhysicsPointer.x = _shufflePhysicsPointer.px = t.clientX - br.left;
-    _shufflePhysicsPointer.y = _shufflePhysicsPointer.py = t.clientY - br.top;
+    var br = overlay.getBoundingClientRect();
+    for (var ti = 0; ti < e.changedTouches.length; ti++) {
+      var t = e.changedTouches[ti];
+      var tx = t.clientX - br.left, ty = t.clientY - br.top;
+      _shuffleTouchPointers[t.identifier] = { x: tx, y: ty, px: tx, py: ty, vx: 0, vy: 0 };
+    }
+    // Keep primary pointer synced to first touch
+    var first = e.touches[0];
+    _shufflePhysicsPointer.x = _shufflePhysicsPointer.px = first.clientX - br.left;
+    _shufflePhysicsPointer.y = _shufflePhysicsPointer.py = first.clientY - br.top;
     _shufflePhysicsPointer.vx = 0;
     _shufflePhysicsPointer.vy = 0;
   }, { passive: false });
   overlay.addEventListener('touchmove', function(e) {
     e.preventDefault();
-    if (!_shufflePhysicsPointer.active) return;
     var br = overlay.getBoundingClientRect();
-    var t = e.changedTouches[0];
-    var nx = t.clientX - br.left;
-    var ny = t.clientY - br.top;
-    _shufflePhysicsPointer.vx = nx - _shufflePhysicsPointer.x;
-    _shufflePhysicsPointer.vy = ny - _shufflePhysicsPointer.y;
-    _shufflePhysicsPointer.px = _shufflePhysicsPointer.x;
-    _shufflePhysicsPointer.py = _shufflePhysicsPointer.y;
-    _shufflePhysicsPointer.x = nx;
-    _shufflePhysicsPointer.y = ny;
+    for (var ti = 0; ti < e.changedTouches.length; ti++) {
+      var t = e.changedTouches[ti];
+      var tp = _shuffleTouchPointers[t.identifier];
+      if (!tp) continue;
+      var nx = t.clientX - br.left, ny = t.clientY - br.top;
+      tp.vx = nx - tp.x;
+      tp.vy = ny - tp.y;
+      tp.px = tp.x;
+      tp.py = tp.y;
+      tp.x = nx;
+      tp.y = ny;
+    }
+    // Sync primary pointer to first active touch
+    var first = e.touches[0];
+    if (first) {
+      var nx = first.clientX - br.left, ny = first.clientY - br.top;
+      _shufflePhysicsPointer.vx = nx - _shufflePhysicsPointer.x;
+      _shufflePhysicsPointer.vy = ny - _shufflePhysicsPointer.y;
+      _shufflePhysicsPointer.px = _shufflePhysicsPointer.x;
+      _shufflePhysicsPointer.py = _shufflePhysicsPointer.y;
+      _shufflePhysicsPointer.x = nx;
+      _shufflePhysicsPointer.y = ny;
+    }
   }, { passive: false });
   overlay.addEventListener('touchend', function(e) {
     e.preventDefault();
-    _shufflePhysicsPointer.active = false;
-    // Auto-gather on finger release
-    _triggerAutoGather();
+    for (var ti = 0; ti < e.changedTouches.length; ti++) {
+      delete _shuffleTouchPointers[e.changedTouches[ti].identifier];
+    }
+    // If no fingers left, deactivate and auto-gather
+    if (e.touches.length === 0) {
+      _shufflePhysicsPointer.active = false;
+      _triggerAutoGather();
+    }
   }, { passive: false });
 }
 
@@ -18058,14 +18095,19 @@ async function _runPickPhase() {
       if (!finalPos) continue;
       // Use CSS transition for smooth movement from current position to final
       (function(sprite, fp, ms) {
+        // Set CSS transition on both sprite and shadow so they move together
         sprite.style.transition = 'transform ' + ms + 'ms ease-in-out';
+        if (sprite._shadow) {
+          sprite._shadow.style.transition = 'transform ' + ms + 'ms ease-in-out';
+        }
         // Force a reflow so the browser registers the current position
         sprite.offsetHeight;
-        // Set the final transform (setPose will try to update shadow but it's hidden)
+        // Set the final transform — setPose updates both sprite and shadow
         sprite.setPose({ x: fp.x, y: fp.y, s: fp.s, rz: fp.rz, ry: 0 });
         settlePromises.push(new Promise(function(resolve) {
           setTimeout(function() {
             sprite.style.transition = '';
+            if (sprite._shadow) sprite._shadow.style.transition = '';
             resolve();
           }, ms + 50);
         }));
