@@ -1,0 +1,978 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Shuffle Physics Sandbox</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #0a3d1a; touch-action: none; -webkit-user-select: none; user-select: none; }
+#table { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 50%, #1a6b3a 0%, #0e4d24 60%, #0a3d1a 100%); }
+.tile {
+  position: absolute; width: 56px; height: 112px;
+  border-radius: 8px; border: 2px solid rgba(255,255,255,0.25);
+  background: linear-gradient(135deg, #1a4a7a 0%, #0d2d4d 100%);
+  transform-origin: 50% 50%; will-change: transform;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+}
+.tile::after {
+  content: ''; position: absolute; inset: 4px; border-radius: 5px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: radial-gradient(ellipse at 40% 30%, rgba(255,255,255,0.06) 0%, transparent 70%);
+}
+/* Touch ring visualization */
+.touch-ring {
+  position: absolute; border-radius: 50%; pointer-events: none;
+  border: 2px solid rgba(255,200,50,0.5); background: rgba(255,200,50,0.08);
+  transform: translate(-50%, -50%); z-index: 600;
+}
+</style>
+</head>
+<body>
+<div id="table"></div>
+<script>
+// ============ SHUFFLE PHYSICS SANDBOX ============
+// Standalone version of the shuffle physics from Texas Dominoes v13.1
+// Unlimited multi-finger touch, no game flow, just drag and tweak
+
+var _shufflePhysicsActive = false;
+var _shufflePhysicsEngine = null;
+var _shufflePhysicsBodies = [];
+var _shuffleTileElements = [];
+var _shuffleAreaCenter = { x: 0, y: 0, r: 200 };
+var _shufflePhysicsRAF = null;
+var _shufflePhysicsPointer = { x: 0, y: 0, px: 0, py: 0, vx: 0, vy: 0, active: false, _isTouch: false };
+var _shuffleTouchPointers = {}; // keyed by touch identifier
+var _shuffleGatherActive = false;
+var _shuffleGatherStartTime = 0;
+var _shuffleGatherRampMs = 2000;
+
+// Recording system
+var _shuffleRecording = false;
+var _shuffleRecordData = [];
+var _shuffleRecordStart = 0;
+var _shuffleRecordings = [];
+
+// Load bundled recordings
+(function() {
+  fetch('shuffle_recordings.json').then(function(r) {
+    if (r.ok) return r.json();
+  }).then(function(data) {
+    if (Array.isArray(data) && data.length > 0) {
+      _shuffleRecordings = data;
+      console.log('[Sandbox] Loaded ' + data.length + ' recordings');
+    }
+  }).catch(function() {
+    console.log('[Sandbox] No recordings file found');
+  });
+})();
+
+// Physics settings — calibrated from Jason's phone testing
+var SHUFFLE_PHYSICS = {
+  // Area
+  centerXN: 0.495, centerYN: 0.49, areaRadius: 0.37,
+  showArea: true, areaOpacity: 0.25, areaColor: '#ffffff',
+  // Tiles
+  tileScale: 0.42, tileCount: 28,
+  // Grab / Push
+  grabRadius: 100, grabStrength: 0.035, grabFalloff: 2, pushOnHover: true,
+  // Physics
+  timeScale: 1.0, frictionAir: 0.12, friction: 0.01,
+  restitution: 0.6, density: 0.005, posIter: 17, velIter: 10,
+  // Boundary
+  boundaryForceStart: 0.7, boundaryForcePeak: 0.08, boundaryExponent: 3, boundaryDamping: 0.85,
+  // Gather
+  gatherForce: 0.005, gatherRadius: 125, gatherDamping: 0.92, autoGatherDelay: 500,
+  // Scatter
+  scatterForce: 0.08, scatterSpin: 0.15,
+  // Visual
+  showShadows: false, shadowOpacity: 0.5, showTouchRings: true,
+};
+var _shufflePhysicsDefaults = JSON.parse(JSON.stringify(SHUFFLE_PHYSICS));
+
+// Auto-load saved settings
+(function() {
+  try {
+    var saved = localStorage.getItem('sandboxShuffleSettings');
+    if (saved) {
+      var data = JSON.parse(saved);
+      for (var key in data) {
+        if (data.hasOwnProperty(key) && SHUFFLE_PHYSICS.hasOwnProperty(key)) {
+          SHUFFLE_PHYSICS[key] = data[key];
+        }
+      }
+      console.log('[Sandbox] Loaded saved settings');
+    }
+  } catch(e) {}
+})();
+
+function getTableRect() {
+  var el = document.getElementById('table');
+  return { width: el.offsetWidth, height: el.offsetHeight };
+}
+
+// ── Start the sandbox ──
+function startSandbox() {
+  var SP = SHUFFLE_PHYSICS;
+  var tableEl = document.getElementById('table');
+  var rect = getTableRect();
+  var W = rect.width, H = rect.height;
+
+  var cx = W * SP.centerXN;
+  var cy = H * SP.centerYN;
+  var areaR = H * SP.areaRadius;
+
+  _shufflePhysicsActive = true;
+  _shuffleGatherActive = false;
+  _shuffleAreaCenter = { x: cx, y: cy, r: areaR };
+
+  // Create Matter.js engine
+  var Engine = Matter.Engine, Bodies = Matter.Bodies, Body = Matter.Body, World = Matter.World;
+  var engine = Engine.create({
+    gravity: { x: 0, y: 0 },
+    positionIterations: SP.posIter,
+    velocityIterations: SP.velIter,
+  });
+  _shufflePhysicsEngine = engine;
+
+  // Physical tile dimensions
+  var tileW = 56 * SP.tileScale;
+  var tileH = 112 * SP.tileScale;
+  var count = SP.tileCount || 28;
+
+  _shufflePhysicsBodies = [];
+  _shuffleTileElements = [];
+
+  for (var idx = 0; idx < count; idx++) {
+    // Create tile DOM element
+    var tile = document.createElement('div');
+    tile.className = 'tile';
+    tableEl.appendChild(tile);
+    _shuffleTileElements.push(tile);
+
+    // Random position inside circle
+    var angle = Math.random() * Math.PI * 2;
+    var dist = Math.random() * areaR * 0.7;
+    var px = cx + Math.cos(angle) * dist;
+    var py = cy + Math.sin(angle) * dist;
+    var bodyAngle = Math.random() * Math.PI * 2;
+
+    var body = Bodies.rectangle(px, py, tileW, tileH, {
+      frictionAir: SP.frictionAir,
+      friction: SP.friction,
+      restitution: SP.restitution,
+      density: SP.density,
+      angle: bodyAngle,
+    });
+    body._idx = idx;
+    body._shufW = tileW;
+    body._shufH = tileH;
+    World.add(engine.world, body);
+    _shufflePhysicsBodies.push(body);
+
+    // Initial transform
+    var tx = px - 28, ty = py - 56, ra = bodyAngle * 180 / Math.PI;
+    tile.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + SP.tileScale + ') rotate(' + ra + 'deg)';
+  }
+
+  // Draw area ring
+  if (SP.showArea) {
+    var ring = document.createElement('div');
+    ring.id = 'shuffleAreaRing';
+    ring.style.cssText = 'position:absolute;border-radius:50%;pointer-events:none;z-index:90;'
+      + 'border:2px solid ' + SP.areaColor + ';'
+      + 'opacity:' + SP.areaOpacity + ';'
+      + 'width:' + (areaR * 2) + 'px;height:' + (areaR * 2) + 'px;'
+      + 'left:' + (cx - areaR) + 'px;top:' + (cy - areaR) + 'px;';
+    tableEl.appendChild(ring);
+  }
+
+  // Create UI
+  createUI(tableEl);
+
+  // Start physics loop
+  physicsLoop();
+}
+
+// ── Physics Loop ──
+function physicsLoop() {
+  if (!_shufflePhysicsActive) return;
+
+  var SP = SHUFFLE_PHYSICS;
+  var engine = _shufflePhysicsEngine;
+  var ptr = _shufflePhysicsPointer;
+  var rect = getTableRect();
+  var clampW = rect.width, clampH = rect.height;
+
+  // Gather force
+  if (_shuffleGatherActive) {
+    var gatherElapsed = performance.now() - _shuffleGatherStartTime;
+    var ramp = Math.min(1, gatherElapsed / _shuffleGatherRampMs);
+    ramp = ramp * ramp;
+    var acx = _shuffleAreaCenter.x, acy = _shuffleAreaCenter.y;
+    var gR = SP.gatherRadius;
+    var gatherTotalDist = 0, gatherTotalSpeed = 0;
+    for (var i = 0; i < _shufflePhysicsBodies.length; i++) {
+      var b = _shufflePhysicsBodies[i];
+      var dx = b.position.x - acx, dy = b.position.y - acy;
+      var dist = Math.hypot(dx, dy);
+      gatherTotalDist += dist;
+      gatherTotalSpeed += Math.abs(b.velocity.x) + Math.abs(b.velocity.y);
+      if (dist > gR && dist > 1) {
+        var excess = dist - gR;
+        var nx = dx / dist, ny = dy / dist;
+        Matter.Body.applyForce(b, b.position, {
+          x: -nx * excess * SP.gatherForce * ramp,
+          y: -ny * excess * SP.gatherForce * ramp
+        });
+        var damp = 1 - (1 - SP.gatherDamping) * ramp;
+        Matter.Body.setVelocity(b, { x: b.velocity.x * damp, y: b.velocity.y * damp });
+      }
+    }
+    var n = _shufflePhysicsBodies.length || 1;
+    if (ramp >= 1 && gatherTotalDist / n < gR * 1.3 && gatherTotalSpeed / n < 0.8) {
+      _shuffleGatherActive = false;
+      var gb = document.getElementById('gatherBtn');
+      if (gb) { gb.style.opacity = '1'; gb.style.pointerEvents = ''; }
+    }
+  }
+
+  // Gradient boundary force
+  if (_shuffleAreaCenter.r > 0 && !_shuffleGatherActive) {
+    var acx2 = _shuffleAreaCenter.x, acy2 = _shuffleAreaCenter.y;
+    var bndR = _shuffleAreaCenter.r;
+    var forceStart = bndR * SP.boundaryForceStart;
+    for (var i = 0; i < _shufflePhysicsBodies.length; i++) {
+      var b = _shufflePhysicsBodies[i];
+      var dx = b.position.x - acx2, dy = b.position.y - acy2;
+      var dist = Math.hypot(dx, dy);
+      if (dist > forceStart && dist > 1) {
+        var nx = dx / dist, ny = dy / dist;
+        var t = (dist - forceStart) / (bndR - forceStart);
+        var strength = SP.boundaryForcePeak * Math.pow(Math.min(t, 3), SP.boundaryExponent);
+        Matter.Body.applyForce(b, b.position, { x: -nx * strength, y: -ny * strength });
+        if (dist > bndR) {
+          Matter.Body.setVelocity(b, { x: b.velocity.x * SP.boundaryDamping, y: b.velocity.y * SP.boundaryDamping });
+        }
+      }
+    }
+  }
+
+  // Hard screen clamp
+  for (var i = 0; i < _shufflePhysicsBodies.length; i++) {
+    var b = _shufflePhysicsBodies[i];
+    var hw = (b._shufW || 30) * 0.5, hh = (b._shufH || 60) * 0.5;
+    var clamped = false;
+    if (b.position.x < hw) { Matter.Body.setPosition(b, { x: hw, y: b.position.y }); clamped = true; }
+    if (b.position.x > clampW - hw) { Matter.Body.setPosition(b, { x: clampW - hw, y: b.position.y }); clamped = true; }
+    if (b.position.y < hh) { Matter.Body.setPosition(b, { x: b.position.x, y: hh }); clamped = true; }
+    if (b.position.y > clampH - hh) { Matter.Body.setPosition(b, { x: b.position.x, y: clampH - hh }); clamped = true; }
+    if (clamped) {
+      var vx = b.velocity.x, vy = b.velocity.y;
+      if (b.position.x <= hw && vx < 0) vx = 0;
+      if (b.position.x >= clampW - hw && vx > 0) vx = 0;
+      if (b.position.y <= hh && vy < 0) vy = 0;
+      if (b.position.y >= clampH - hh && vy > 0) vy = 0;
+      Matter.Body.setVelocity(b, { x: vx * 0.5, y: vy * 0.5 });
+    }
+  }
+
+  // Apply grab force from all active pointers (unlimited fingers)
+  var forcePoints = [];
+  if (ptr._isTouch) {
+    var touchKeys = Object.keys(_shuffleTouchPointers);
+    for (var tk = 0; tk < touchKeys.length; tk++) {
+      var tp = _shuffleTouchPointers[touchKeys[tk]];
+      forcePoints.push({ x: tp.x, y: tp.y, vx: tp.vx, vy: tp.vy });
+    }
+  } else if (ptr.active) {
+    // Mouse: primary + 180 degree mirror
+    forcePoints.push({ x: ptr.x, y: ptr.y, vx: ptr.vx, vy: ptr.vy });
+    var ac = _shuffleAreaCenter;
+    forcePoints.push({ x: 2 * ac.x - ptr.x, y: 2 * ac.y - ptr.y, vx: -ptr.vx, vy: -ptr.vy });
+  }
+
+  for (var fp = 0; fp < forcePoints.length; fp++) {
+    var pt = forcePoints[fp];
+    var spd = Math.hypot(pt.vx, pt.vy);
+    if (spd < 0.5) continue;
+    var R = SP.grabRadius, R2 = R * R;
+    var ux = pt.vx / spd, uy = pt.vy / spd;
+    for (var i = 0; i < _shufflePhysicsBodies.length; i++) {
+      var b = _shufflePhysicsBodies[i];
+      var dx = b.position.x - pt.x, dy = b.position.y - pt.y;
+      var dist2 = dx * dx + dy * dy;
+      if (dist2 >= R2) continue;
+      if (dx * ux + dy * uy > 0) continue;
+      var t = 1 - Math.sqrt(dist2) / R;
+      Matter.Body.applyForce(b, b.position, {
+        x: pt.vx * Math.pow(t, SP.grabFalloff) * SP.grabStrength,
+        y: pt.vy * Math.pow(t, SP.grabFalloff) * SP.grabStrength
+      });
+    }
+  }
+
+  // Record pointer data
+  if (_shuffleRecording && forcePoints.length > 0) {
+    var recT = performance.now() - _shuffleRecordStart;
+    for (var ri = 0; ri < forcePoints.length; ri++) {
+      var rp = forcePoints[ri];
+      _shuffleRecordData.push({ t: recT, x: rp.x, y: rp.y, vx: rp.vx, vy: rp.vy });
+    }
+  }
+
+  // Step physics
+  Matter.Engine.update(engine, (1000 / 60) * SP.timeScale);
+
+  // Sync body positions to tile elements
+  var sc = SP.tileScale;
+  for (var i = 0; i < _shufflePhysicsBodies.length; i++) {
+    var body = _shufflePhysicsBodies[i];
+    var tile = _shuffleTileElements[i];
+    if (!tile) continue;
+    var tx = body.position.x - 28, ty = body.position.y - 56, ra = body.angle * 180 / Math.PI;
+    tile.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + sc + ') rotate(' + ra + 'deg)';
+  }
+
+  // Update touch ring visuals
+  updateTouchRings();
+
+  _shufflePhysicsRAF = requestAnimationFrame(physicsLoop);
+}
+
+// ── Touch Ring Visualization ──
+function updateTouchRings() {
+  var SP = SHUFFLE_PHYSICS;
+  var tableEl = document.getElementById('table');
+
+  // Remove stale rings
+  var existingRings = tableEl.querySelectorAll('.touch-ring');
+  var activeIds = new Set(Object.keys(_shuffleTouchPointers));
+
+  for (var i = 0; i < existingRings.length; i++) {
+    if (!activeIds.has(existingRings[i].dataset.touchId)) {
+      existingRings[i].remove();
+    }
+  }
+
+  if (!SP.showTouchRings) return;
+
+  // Update/create rings for active touches
+  var keys = Object.keys(_shuffleTouchPointers);
+  for (var k = 0; k < keys.length; k++) {
+    var id = keys[k];
+    var tp = _shuffleTouchPointers[id];
+    var ring = tableEl.querySelector('.touch-ring[data-touch-id="' + id + '"]');
+    if (!ring) {
+      ring = document.createElement('div');
+      ring.className = 'touch-ring';
+      ring.dataset.touchId = id;
+      tableEl.appendChild(ring);
+    }
+    var size = SP.grabRadius * 2;
+    ring.style.width = size + 'px';
+    ring.style.height = size + 'px';
+    ring.style.left = tp.x + 'px';
+    ring.style.top = tp.y + 'px';
+  }
+}
+
+// ── Recording Playback ──
+function playRecording(rec) {
+  var ac = _shuffleAreaCenter;
+  var cx = ac.x, cy = ac.y, r = ac.r;
+  var ptr = _shufflePhysicsPointer;
+  var points = rec.points;
+  var idx = 0;
+  var startTime = performance.now();
+
+  var speedMult = 0.85 + Math.random() * 0.3;
+  var mirrorX = Math.random() > 0.5 ? -1 : 1;
+  var mirrorY = Math.random() > 0.5 ? -1 : 1;
+  var rotAngle = Math.random() * Math.PI * 2;
+  var cosR = Math.cos(rotAngle), sinR = Math.sin(rotAngle);
+  var jitter = 0.01 + Math.random() * 0.02;
+  var strengthMult = 0.85 + Math.random() * 0.3;
+
+  var playTimer = setInterval(function() {
+    if (!_shufflePhysicsActive) { clearInterval(playTimer); return; }
+    var now = (performance.now() - startTime) * speedMult;
+    while (idx < points.length - 1 && points[idx + 1].t <= now) idx++;
+    if (idx >= points.length - 1) {
+      clearInterval(playTimer);
+      ptr.active = false;
+      return;
+    }
+    var p0 = points[idx];
+    var p1 = points[Math.min(idx + 1, points.length - 1)];
+    var dt = p1.t - p0.t;
+    var frac = dt > 0 ? Math.min(1, (now - p0.t) / dt) : 1;
+    var bx = (p0.x + (p1.x - p0.x) * frac) * mirrorX;
+    var by = (p0.y + (p1.y - p0.y) * frac) * mirrorY;
+    var bvx = (p0.vx + (p1.vx - p0.vx) * frac) * mirrorX;
+    var bvy = (p0.vy + (p1.vy - p0.vy) * frac) * mirrorY;
+    var rx = bx * cosR - by * sinR;
+    var ry = bx * sinR + by * cosR;
+    var rvx = bvx * cosR - bvy * sinR;
+    var rvy = bvx * sinR + bvy * cosR;
+    rx += (Math.random() - 0.5) * jitter;
+    ry += (Math.random() - 0.5) * jitter;
+    ptr.x = cx + rx * r;
+    ptr.y = cy + ry * r;
+    ptr.vx = rvx * r * strengthMult;
+    ptr.vy = rvy * r * strengthMult;
+    ptr.active = true;
+    ptr._isTouch = false;
+  }, 16);
+}
+
+// ── Live-apply settings ──
+function applySettingsLive() {
+  var SP = SHUFFLE_PHYSICS;
+  var newW = 56 * SP.tileScale;
+  var newH = 112 * SP.tileScale;
+  for (var i = 0; i < _shufflePhysicsBodies.length; i++) {
+    var b = _shufflePhysicsBodies[i];
+    b.frictionAir = SP.frictionAir;
+    b.friction = SP.friction;
+    b.restitution = SP.restitution;
+    var curW = b._shufW || newW, curH = b._shufH || newH;
+    if (Math.abs(curW - newW) > 0.5 || Math.abs(curH - newH) > 0.5) {
+      Matter.Body.scale(b, newW / curW, newH / curH);
+      b._shufW = newW;
+      b._shufH = newH;
+    }
+  }
+  if (_shufflePhysicsEngine) {
+    _shufflePhysicsEngine.positionIterations = Math.round(SP.posIter);
+    _shufflePhysicsEngine.velocityIterations = Math.round(SP.velIter);
+  }
+  // Update area ring
+  var ring = document.getElementById('shuffleAreaRing');
+  var rect = getTableRect();
+  var cx = rect.width * SP.centerXN;
+  var cy = rect.height * SP.centerYN;
+  var areaR = rect.height * SP.areaRadius;
+  _shuffleAreaCenter.x = cx;
+  _shuffleAreaCenter.y = cy;
+  _shuffleAreaCenter.r = areaR;
+  if (ring) {
+    ring.style.width = (areaR * 2) + 'px';
+    ring.style.height = (areaR * 2) + 'px';
+    ring.style.left = (cx - areaR) + 'px';
+    ring.style.top = (cy - areaR) + 'px';
+    ring.style.opacity = SP.showArea ? SP.areaOpacity : 0;
+  }
+}
+
+// ── Restart with new tile count ──
+function restartWithTileCount(newCount) {
+  // Stop physics
+  _shufflePhysicsActive = false;
+  if (_shufflePhysicsRAF) cancelAnimationFrame(_shufflePhysicsRAF);
+  if (_shufflePhysicsEngine) {
+    Matter.World.clear(_shufflePhysicsEngine.world);
+    Matter.Engine.clear(_shufflePhysicsEngine);
+  }
+  // Remove tiles and UI
+  for (var i = 0; i < _shuffleTileElements.length; i++) _shuffleTileElements[i].remove();
+  _shuffleTileElements = [];
+  _shufflePhysicsBodies = [];
+  var overlay = document.getElementById('shuffleOverlay'); if (overlay) overlay.remove();
+  var btnBar = document.getElementById('shuffleBtnBar'); if (btnBar) btnBar.remove();
+  var hint = document.getElementById('shuffleHint'); if (hint) hint.remove();
+  var ring = document.getElementById('shuffleAreaRing'); if (ring) ring.remove();
+  var panel = document.getElementById('shuffleSettingsPanel'); if (panel) panel.remove();
+  var rings = document.querySelectorAll('.touch-ring'); for (var r = 0; r < rings.length; r++) rings[r].remove();
+
+  SHUFFLE_PHYSICS.tileCount = newCount;
+  startSandbox();
+}
+
+// ── UI ──
+function createUI(tableEl) {
+  var SP = SHUFFLE_PHYSICS;
+
+  // Touch/mouse overlay
+  var overlay = document.createElement('div');
+  overlay.id = 'shuffleOverlay';
+  overlay.style.cssText = 'position:absolute;inset:0;z-index:500;cursor:crosshair;touch-action:none;';
+  tableEl.appendChild(overlay);
+
+  // Button bar
+  var btnBar = document.createElement('div');
+  btnBar.id = 'shuffleBtnBar';
+  btnBar.style.cssText = 'position:absolute;bottom:4%;left:50%;transform:translateX(-50%);z-index:510;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;';
+  tableEl.appendChild(btnBar);
+
+  // Hint
+  var hint = document.createElement('div');
+  hint.id = 'shuffleHint';
+  hint.style.cssText = 'position:absolute;top:3%;left:50%;transform:translateX(-50%);z-index:510;background:rgba(0,0,0,0.6);color:rgba(255,255,255,0.9);padding:6px 16px;border-radius:20px;font-size:13px;font-weight:600;font-family:system-ui,sans-serif;pointer-events:none;';
+  hint.textContent = 'Shuffle Sandbox — drag tiles with fingers or mouse';
+  tableEl.appendChild(hint);
+
+  var btnStyle = 'color:#fff;border:none;padding:8px 16px;border-radius:8px;font-size:12px;font-weight:700;font-family:system-ui,sans-serif;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.4);';
+
+  // Gather
+  var gatherBtn = document.createElement('button');
+  gatherBtn.id = 'gatherBtn';
+  gatherBtn.textContent = 'Gather';
+  gatherBtn.style.cssText = btnStyle + 'background:rgba(59,130,246,0.9);';
+  gatherBtn.addEventListener('click', function() {
+    _shuffleGatherActive = true;
+    _shuffleGatherStartTime = performance.now();
+    gatherBtn.style.opacity = '0.5';
+    gatherBtn.style.pointerEvents = 'none';
+  });
+  btnBar.appendChild(gatherBtn);
+
+  // Scatter
+  var scatterBtn = document.createElement('button');
+  scatterBtn.textContent = 'Scatter';
+  scatterBtn.style.cssText = btnStyle + 'background:rgba(168,85,247,0.9);';
+  scatterBtn.addEventListener('click', function() {
+    _shuffleGatherActive = false;
+    gatherBtn.style.opacity = '1';
+    gatherBtn.style.pointerEvents = '';
+    for (var i = 0; i < _shufflePhysicsBodies.length; i++) {
+      var b = _shufflePhysicsBodies[i];
+      Matter.Body.setVelocity(b, {
+        x: (Math.random() - 0.5) * SP.scatterForce * 200,
+        y: (Math.random() - 0.5) * SP.scatterForce * 200
+      });
+      Matter.Body.setAngularVelocity(b, (Math.random() - 0.5) * SP.scatterSpin * 2);
+    }
+  });
+  btnBar.appendChild(scatterBtn);
+
+  // Replay
+  var replayBtn = document.createElement('button');
+  replayBtn.textContent = 'Replay';
+  replayBtn.style.cssText = btnStyle + 'background:rgba(14,165,233,0.9);';
+  replayBtn.addEventListener('click', function() {
+    if (_shuffleRecordings.length === 0) {
+      replayBtn.textContent = 'No recordings';
+      setTimeout(function() { replayBtn.textContent = 'Replay'; }, 1500);
+      return;
+    }
+    var rec = _shuffleRecordings[Math.floor(Math.random() * _shuffleRecordings.length)];
+    playRecording(rec);
+    replayBtn.textContent = 'Playing...';
+    setTimeout(function() { replayBtn.textContent = 'Replay'; }, 3000);
+  });
+  btnBar.appendChild(replayBtn);
+
+  // Record
+  var recordBtn = document.createElement('button');
+  recordBtn.textContent = 'Record';
+  recordBtn.style.cssText = btnStyle + 'background:rgba(220,38,38,0.9);';
+  recordBtn.addEventListener('click', function() {
+    if (_shuffleRecording) {
+      _shuffleRecording = false;
+      recordBtn.textContent = 'Record';
+      recordBtn.style.background = 'rgba(220,38,38,0.9)';
+      exportBtn.style.display = '';
+    } else {
+      _shuffleRecordData = [];
+      _shuffleRecordStart = performance.now();
+      _shuffleRecording = true;
+      recordBtn.textContent = 'Stop Rec';
+      recordBtn.style.background = 'rgba(220,38,38,1.0)';
+      exportBtn.style.display = 'none';
+    }
+  });
+  btnBar.appendChild(recordBtn);
+
+  // Export
+  var exportBtn = document.createElement('button');
+  exportBtn.textContent = 'Export';
+  exportBtn.style.cssText = btnStyle + 'background:rgba(234,179,8,0.9);display:none;';
+  exportBtn.addEventListener('click', function() {
+    if (!_shuffleRecordData || _shuffleRecordData.length === 0) return;
+    var ac = _shuffleAreaCenter;
+    var normalized = _shuffleRecordData.map(function(pt) {
+      return {
+        t: Math.round(pt.t),
+        x: +((pt.x - ac.x) / ac.r).toFixed(4),
+        y: +((pt.y - ac.y) / ac.r).toFixed(4),
+        vx: +(pt.vx / ac.r).toFixed(4),
+        vy: +(pt.vy / ac.r).toFixed(4)
+      };
+    });
+    var recording = { points: normalized, duration: normalized[normalized.length - 1].t, ts: Date.now() };
+    var savedRecs = [];
+    try { var sr = localStorage.getItem('sandboxRecordings'); if (sr) savedRecs = JSON.parse(sr); } catch(e) {}
+    savedRecs.push(recording);
+    localStorage.setItem('sandboxRecordings', JSON.stringify(savedRecs));
+
+    var json = JSON.stringify(recording, null, 1);
+    var blob = new Blob([json], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = 'shuffle_recording_' + savedRecs.length + '.json'; a.click();
+    URL.revokeObjectURL(url);
+    exportBtn.textContent = 'Saved #' + savedRecs.length + '!';
+    setTimeout(function() { exportBtn.textContent = 'Export'; }, 2000);
+  });
+  btnBar.appendChild(exportBtn);
+
+  // Settings
+  var settingsBtn = document.createElement('button');
+  settingsBtn.textContent = 'Settings';
+  settingsBtn.style.cssText = btnStyle + 'background:rgba(100,100,100,0.9);';
+  settingsBtn.addEventListener('click', function() {
+    var panel = document.getElementById('shuffleSettingsPanel');
+    if (panel) panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
+  });
+  btnBar.appendChild(settingsBtn);
+
+  createSettingsPanel(tableEl);
+
+  // ── Mouse handlers ──
+  var _mouseDown = false;
+  var _mouseIdleTimer = null;
+
+  function triggerAutoGather() {
+    if (!_shuffleGatherActive && _shufflePhysicsActive) {
+      _shuffleGatherActive = true;
+      _shuffleGatherStartTime = performance.now();
+    }
+  }
+  function resetMouseIdle() {
+    if (_mouseIdleTimer) clearTimeout(_mouseIdleTimer);
+    if (_shuffleGatherActive) _shuffleGatherActive = false;
+    _mouseIdleTimer = setTimeout(triggerAutoGather, SHUFFLE_PHYSICS.autoGatherDelay);
+  }
+
+  overlay.addEventListener('mousedown', function(e) {
+    _mouseDown = true;
+    _shufflePhysicsPointer._isTouch = false;
+    var br = overlay.getBoundingClientRect();
+    _shufflePhysicsPointer.x = _shufflePhysicsPointer.px = e.clientX - br.left;
+    _shufflePhysicsPointer.y = _shufflePhysicsPointer.py = e.clientY - br.top;
+    _shufflePhysicsPointer.vx = 0; _shufflePhysicsPointer.vy = 0;
+    if (!SHUFFLE_PHYSICS.pushOnHover) _shufflePhysicsPointer.active = true;
+    overlay.style.cursor = 'grabbing';
+  });
+  overlay.addEventListener('mousemove', function(e) {
+    _shufflePhysicsPointer._isTouch = false;
+    var br = overlay.getBoundingClientRect();
+    var nx = e.clientX - br.left, ny = e.clientY - br.top;
+    _shufflePhysicsPointer.vx = nx - _shufflePhysicsPointer.x;
+    _shufflePhysicsPointer.vy = ny - _shufflePhysicsPointer.y;
+    _shufflePhysicsPointer.px = _shufflePhysicsPointer.x;
+    _shufflePhysicsPointer.py = _shufflePhysicsPointer.y;
+    _shufflePhysicsPointer.x = nx;
+    _shufflePhysicsPointer.y = ny;
+    if (SHUFFLE_PHYSICS.pushOnHover || _mouseDown) _shufflePhysicsPointer.active = true;
+    if (_shufflePhysicsPointer.active) resetMouseIdle();
+  });
+  overlay.addEventListener('mouseup', function() {
+    _mouseDown = false;
+    if (!SHUFFLE_PHYSICS.pushOnHover) _shufflePhysicsPointer.active = false;
+    overlay.style.cursor = 'crosshair';
+    triggerAutoGather();
+  });
+  overlay.addEventListener('mouseleave', function() {
+    _mouseDown = false;
+    _shufflePhysicsPointer.active = false;
+    overlay.style.cursor = 'crosshair';
+    if (_mouseIdleTimer) clearTimeout(_mouseIdleTimer);
+    triggerAutoGather();
+  });
+
+  // ── Touch handlers — unlimited fingers ──
+  overlay.addEventListener('touchstart', function(e) {
+    e.preventDefault();
+    if (_shuffleGatherActive) _shuffleGatherActive = false;
+    _shufflePhysicsPointer._isTouch = true;
+    _shufflePhysicsPointer.active = true;
+    var br = overlay.getBoundingClientRect();
+    for (var ti = 0; ti < e.changedTouches.length; ti++) {
+      var t = e.changedTouches[ti];
+      var tx = t.clientX - br.left, ty = t.clientY - br.top;
+      _shuffleTouchPointers[t.identifier] = { x: tx, y: ty, px: tx, py: ty, vx: 0, vy: 0 };
+    }
+    var first = e.touches[0];
+    _shufflePhysicsPointer.x = _shufflePhysicsPointer.px = first.clientX - br.left;
+    _shufflePhysicsPointer.y = _shufflePhysicsPointer.py = first.clientY - br.top;
+    _shufflePhysicsPointer.vx = 0; _shufflePhysicsPointer.vy = 0;
+    // Reset idle
+    if (_mouseIdleTimer) clearTimeout(_mouseIdleTimer);
+    if (gatherBtn) { gatherBtn.style.opacity = '1'; gatherBtn.style.pointerEvents = ''; }
+  }, { passive: false });
+
+  overlay.addEventListener('touchmove', function(e) {
+    e.preventDefault();
+    var br = overlay.getBoundingClientRect();
+    for (var ti = 0; ti < e.changedTouches.length; ti++) {
+      var t = e.changedTouches[ti];
+      var tp = _shuffleTouchPointers[t.identifier];
+      if (!tp) continue;
+      var nx = t.clientX - br.left, ny = t.clientY - br.top;
+      tp.vx = nx - tp.x;
+      tp.vy = ny - tp.y;
+      tp.px = tp.x; tp.py = tp.y;
+      tp.x = nx; tp.y = ny;
+    }
+    var first = e.touches[0];
+    if (first) {
+      var nx = first.clientX - br.left, ny = first.clientY - br.top;
+      _shufflePhysicsPointer.vx = nx - _shufflePhysicsPointer.x;
+      _shufflePhysicsPointer.vy = ny - _shufflePhysicsPointer.y;
+      _shufflePhysicsPointer.px = _shufflePhysicsPointer.x;
+      _shufflePhysicsPointer.py = _shufflePhysicsPointer.y;
+      _shufflePhysicsPointer.x = nx;
+      _shufflePhysicsPointer.y = ny;
+    }
+    // Reset idle timer
+    if (_mouseIdleTimer) clearTimeout(_mouseIdleTimer);
+    _mouseIdleTimer = setTimeout(triggerAutoGather, SHUFFLE_PHYSICS.autoGatherDelay);
+  }, { passive: false });
+
+  overlay.addEventListener('touchend', function(e) {
+    e.preventDefault();
+    for (var ti = 0; ti < e.changedTouches.length; ti++) {
+      delete _shuffleTouchPointers[e.changedTouches[ti].identifier];
+    }
+    if (e.touches.length === 0) {
+      _shufflePhysicsPointer.active = false;
+      _shufflePhysicsPointer._isTouch = false;
+      triggerAutoGather();
+    }
+  }, { passive: false });
+
+  overlay.addEventListener('touchcancel', function(e) {
+    for (var ti = 0; ti < e.changedTouches.length; ti++) {
+      delete _shuffleTouchPointers[e.changedTouches[ti].identifier];
+    }
+    if (e.touches.length === 0) {
+      _shufflePhysicsPointer.active = false;
+      _shufflePhysicsPointer._isTouch = false;
+    }
+  }, { passive: false });
+}
+
+// ── Settings Panel ──
+function createSettingsPanel(tableEl) {
+  var SP = SHUFFLE_PHYSICS;
+  var panel = document.createElement('div');
+  panel.id = 'shuffleSettingsPanel';
+  panel.style.cssText = 'position:absolute;top:0;right:0;bottom:0;width:280px;z-index:520;'
+    + 'background:rgba(4,16,8,0.95);border-left:1px solid rgba(255,255,255,0.1);'
+    + 'overflow-y:auto;display:none;flex-direction:column;padding:14px;font-family:system-ui,sans-serif;'
+    + 'color:rgba(255,255,255,0.9);font-size:12px;-webkit-overflow-scrolling:touch;';
+  tableEl.appendChild(panel);
+
+  // Title bar
+  var titleBar = document.createElement('div');
+  titleBar.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.1);';
+  var title = document.createElement('div');
+  title.style.cssText = 'font-size:13px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:rgba(255,255,255,0.85);';
+  title.textContent = 'Shuffle Settings';
+  var closeBtn = document.createElement('div');
+  closeBtn.style.cssText = 'cursor:pointer;color:rgba(255,255,255,0.5);font-size:18px;font-weight:bold;padding:0 4px;line-height:1;';
+  closeBtn.textContent = '\u2715';
+  closeBtn.addEventListener('click', function() { panel.style.display = 'none'; });
+  titleBar.appendChild(title);
+  titleBar.appendChild(closeBtn);
+  panel.appendChild(titleBar);
+
+  function section(label) {
+    var sec = document.createElement('div');
+    sec.style.cssText = 'color:rgba(80,200,110,0.7);font-size:9px;letter-spacing:0.16em;text-transform:uppercase;margin:14px 0 6px;';
+    sec.textContent = label;
+    panel.appendChild(sec);
+  }
+
+  function slider(label, key, min, max, step, decimals, onChange) {
+    var row = document.createElement('div');
+    row.style.cssText = 'margin-bottom:10px;';
+    var top = document.createElement('div');
+    top.style.cssText = 'display:flex;justify-content:space-between;margin-bottom:3px;';
+    var lbl = document.createElement('span');
+    lbl.style.cssText = 'color:rgba(255,255,255,0.6);font-size:11px;';
+    lbl.textContent = label;
+    var val = document.createElement('span');
+    val.style.cssText = 'color:rgba(80,210,110,0.95);font-size:11px;font-weight:bold;min-width:40px;text-align:right;';
+    val.textContent = decimals === 0 ? Math.round(SP[key]) : Number(SP[key]).toFixed(decimals);
+    top.appendChild(lbl); top.appendChild(val);
+    var sl = document.createElement('input');
+    sl.type = 'range'; sl.min = min; sl.max = max; sl.step = step; sl.value = SP[key];
+    sl.style.cssText = 'width:100%;-webkit-appearance:none;height:3px;background:rgba(255,255,255,0.15);border-radius:2px;outline:none;cursor:pointer;';
+    sl._spKey = key; sl._spDecimals = decimals;
+    sl.addEventListener('input', function() {
+      var v = parseFloat(sl.value);
+      SP[key] = v;
+      val.textContent = decimals === 0 ? Math.round(v) : v.toFixed(decimals);
+      applySettingsLive();
+      if (onChange) onChange(v);
+    });
+    row.appendChild(top); row.appendChild(sl);
+    panel.appendChild(row);
+    return sl;
+  }
+
+  function toggle(label, key) {
+    var row = document.createElement('div');
+    row.style.cssText = 'margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;';
+    var lbl = document.createElement('span');
+    lbl.style.cssText = 'color:rgba(255,255,255,0.6);font-size:11px;';
+    lbl.textContent = label;
+    var cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = SP[key];
+    cb.style.cssText = 'cursor:pointer;';
+    cb.addEventListener('change', function() { SP[key] = cb.checked; applySettingsLive(); });
+    row.appendChild(lbl); row.appendChild(cb);
+    panel.appendChild(row);
+  }
+
+  // ── Sliders ──
+  section('Area');
+  slider('Center X', 'centerXN', 0.1, 0.9, 0.005, 3);
+  slider('Center Y', 'centerYN', 0.1, 0.9, 0.005, 3);
+  slider('Area Radius', 'areaRadius', 0.10, 0.50, 0.01, 2);
+  toggle('Show Boundary', 'showArea');
+  slider('Boundary Opacity', 'areaOpacity', 0, 1, 0.05, 2);
+
+  section('Tiles');
+  slider('Tile Scale', 'tileScale', 0.2, 0.8, 0.01, 2);
+  slider('Tile Count', 'tileCount', 1, 56, 1, 0, function(v) {
+    restartWithTileCount(Math.round(v));
+  });
+
+  section('Grab / Push');
+  slider('Grab Radius', 'grabRadius', 30, 300, 5, 0);
+  slider('Grab Strength', 'grabStrength', 0.005, 0.15, 0.005, 3);
+  slider('Grab Falloff', 'grabFalloff', 0.5, 6, 0.1, 1);
+  toggle('Push on Hover', 'pushOnHover');
+
+  section('Physics');
+  slider('Animation Speed', 'timeScale', 0.1, 3.0, 0.1, 1);
+  slider('Air Resistance', 'frictionAir', 0.01, 0.5, 0.01, 2);
+  slider('Tile Friction', 'friction', 0.0, 0.5, 0.01, 2);
+  slider('Bounciness', 'restitution', 0.0, 1.0, 0.05, 2);
+  slider('Density', 'density', 0.001, 0.02, 0.001, 3);
+  slider('Position Iterations', 'posIter', 1, 30, 1, 0);
+  slider('Velocity Iterations', 'velIter', 1, 30, 1, 0);
+
+  section('Boundary (Gradient)');
+  slider('Force Start', 'boundaryForceStart', 0.3, 1.0, 0.05, 2);
+  slider('Force Peak', 'boundaryForcePeak', 0.01, 0.3, 0.005, 3);
+  slider('Force Curve', 'boundaryExponent', 1, 6, 0.5, 1);
+  slider('Escape Damping', 'boundaryDamping', 0.5, 1.0, 0.01, 2);
+
+  section('Gather');
+  slider('Gather Force', 'gatherForce', 0.005, 0.2, 0.005, 3);
+  slider('Gather Radius', 'gatherRadius', 20, 200, 5, 0);
+  slider('Gather Damping', 'gatherDamping', 0.7, 1.0, 0.01, 2);
+  slider('Auto-Gather Delay (ms)', 'autoGatherDelay', 100, 3000, 50, 0);
+
+  section('Scatter');
+  slider('Scatter Force', 'scatterForce', 0.01, 0.3, 0.01, 2);
+  slider('Scatter Spin', 'scatterSpin', 0.0, 0.5, 0.01, 2);
+
+  section('Visual');
+  toggle('Show Touch Rings', 'showTouchRings');
+
+  // ── Save / Load ──
+  section('Save / Load');
+  var saveBtnStyle = 'width:100%;color:#fff;border:none;padding:8px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;margin-bottom:6px;';
+
+  var saveBtn = document.createElement('button');
+  saveBtn.textContent = 'Save Settings';
+  saveBtn.style.cssText = saveBtnStyle + 'background:rgba(34,197,94,0.8);';
+  saveBtn.addEventListener('click', function() {
+    var data = {};
+    for (var key in SP) { if (SP.hasOwnProperty(key)) data[key] = SP[key]; }
+    localStorage.setItem('sandboxShuffleSettings', JSON.stringify(data));
+    saveBtn.textContent = 'Saved!';
+    setTimeout(function() { saveBtn.textContent = 'Save Settings'; }, 1500);
+  });
+  panel.appendChild(saveBtn);
+
+  var loadBtn = document.createElement('button');
+  loadBtn.textContent = 'Load Settings';
+  loadBtn.style.cssText = saveBtnStyle + 'background:rgba(59,130,246,0.8);';
+  loadBtn.addEventListener('click', function() {
+    var saved = localStorage.getItem('sandboxShuffleSettings');
+    if (!saved) { loadBtn.textContent = 'No saved settings'; setTimeout(function() { loadBtn.textContent = 'Load Settings'; }, 1500); return; }
+    var data = JSON.parse(saved);
+    for (var key in data) { if (data.hasOwnProperty(key) && SP.hasOwnProperty(key)) SP[key] = data[key]; }
+    applySettingsLive();
+    var sliders = panel.querySelectorAll('input[type=range]');
+    sliders.forEach(function(sl) {
+      if (sl._spKey && SP[sl._spKey] !== undefined) {
+        sl.value = SP[sl._spKey];
+        var valEl = sl.parentNode.parentNode.querySelector('span:last-child');
+        if (valEl) valEl.textContent = sl._spDecimals === 0 ? Math.round(SP[sl._spKey]) : Number(SP[sl._spKey]).toFixed(sl._spDecimals);
+      }
+    });
+    loadBtn.textContent = 'Loaded!';
+    setTimeout(function() { loadBtn.textContent = 'Load Settings'; }, 1500);
+  });
+  panel.appendChild(loadBtn);
+
+  var resetBtn = document.createElement('button');
+  resetBtn.textContent = 'Reset to Defaults';
+  resetBtn.style.cssText = saveBtnStyle + 'background:rgba(239,68,68,0.8);';
+  resetBtn.addEventListener('click', function() {
+    for (var key in _shufflePhysicsDefaults) { if (_shufflePhysicsDefaults.hasOwnProperty(key)) SP[key] = _shufflePhysicsDefaults[key]; }
+    applySettingsLive();
+    var sliders = panel.querySelectorAll('input[type=range]');
+    sliders.forEach(function(sl) {
+      if (sl._spKey && SP[sl._spKey] !== undefined) {
+        sl.value = SP[sl._spKey];
+        var valEl = sl.parentNode.parentNode.querySelector('span:last-child');
+        if (valEl) valEl.textContent = sl._spDecimals === 0 ? Math.round(SP[sl._spKey]) : Number(SP[sl._spKey]).toFixed(sl._spDecimals);
+      }
+    });
+    resetBtn.textContent = 'Reset!';
+    setTimeout(function() { resetBtn.textContent = 'Reset to Defaults'; }, 1500);
+  });
+  panel.appendChild(resetBtn);
+
+  var exportAllBtn = document.createElement('button');
+  exportAllBtn.textContent = 'Export All (Settings + Recordings)';
+  exportAllBtn.style.cssText = saveBtnStyle + 'background:rgba(234,179,8,0.8);margin-top:8px;';
+  exportAllBtn.addEventListener('click', function() {
+    var data = { settings: {}, recordings: [] };
+    for (var key in SP) { if (SP.hasOwnProperty(key)) data.settings[key] = SP[key]; }
+    var savedRecs = localStorage.getItem('sandboxRecordings');
+    if (savedRecs) data.recordings = JSON.parse(savedRecs);
+    var json = JSON.stringify(data, null, 1);
+    var blob = new Blob([json], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = 'shuffle_sandbox_config.json'; a.click();
+    URL.revokeObjectURL(url);
+    navigator.clipboard.writeText(json).then(function() {
+      exportAllBtn.textContent = 'Copied + Downloaded!';
+    }).catch(function() {
+      exportAllBtn.textContent = 'Downloaded!';
+    });
+    setTimeout(function() { exportAllBtn.textContent = 'Export All (Settings + Recordings)'; }, 2000);
+  });
+  panel.appendChild(exportAllBtn);
+
+  // Finger count display
+  var fingerCount = document.createElement('div');
+  fingerCount.id = 'fingerCount';
+  fingerCount.style.cssText = 'color:rgba(255,255,255,0.5);font-size:10px;margin-top:8px;text-align:center;';
+  fingerCount.textContent = 'Touch: 0 fingers';
+  panel.appendChild(fingerCount);
+
+  // Update finger count periodically
+  setInterval(function() {
+    var n = Object.keys(_shuffleTouchPointers).length;
+    fingerCount.textContent = 'Touch: ' + n + ' finger' + (n !== 1 ? 's' : '');
+  }, 200);
+}
+
+// Start on load
+window.addEventListener('load', startSandbox);
+</script>
+</body>
+</html>
