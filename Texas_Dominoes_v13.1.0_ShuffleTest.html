@@ -18504,11 +18504,17 @@ function _sandboxStartShakeDetection() {
 }
 
 function _sandboxBindShake() {
-  var shakeThreshold = 12; // m/s^2 — moderate shake
+  // Continuous proportional response: gentle tilt/sway moves tiles gently,
+  // hard shake sends them flying. No hard threshold — always responsive.
+  var deadZone = 1.5;   // m/s^2 — ignore tiny sensor noise
+  var gentleMax = 8;    // up to this = gentle nudge
+  var violentMin = 20;  // above this = max violence
+  var cooldownMs = 50;  // fast updates for fluid feel
+
   _sandboxShakeHandler = function(e) {
     if (!_shuffleSandboxActive || !_shufflePhysicsActive) return;
 
-    // Prefer acceleration (gravity removed) if available, fall back to includingGravity
+    // Prefer acceleration (gravity removed) if available
     var acc = e.acceleration;
     var useRaw = acc && (acc.x !== null || acc.y !== null || acc.z !== null);
     if (!useRaw) {
@@ -18521,29 +18527,48 @@ function _sandboxBindShake() {
     if (useRaw) {
       shakeMag = Math.sqrt(ax * ax + ay * ay + az * az);
     } else {
-      // Subtract gravity from magnitude
       shakeMag = Math.abs(Math.sqrt(ax * ax + ay * ay + az * az) - 9.8);
     }
-    if (shakeMag < shakeThreshold) return;
+    if (shakeMag < deadZone) return;
 
     var now = performance.now();
-    if (now - _sandboxShakeLastTime < _sandboxShakeCooldown) return;
+    if (now - _sandboxShakeLastTime < cooldownMs) return;
     _sandboxShakeLastTime = now;
 
-    // Violent scatter — scale force by shake intensity
-    var forceMult = Math.min(shakeMag / shakeThreshold, 3.0);
+    // Smooth 0-1 intensity curve: dead zone → gentle → violent
+    // Ramps from 0 at deadZone to ~0.3 at gentleMax to 1.0 at violentMin+
+    var t = (shakeMag - deadZone) / (violentMin - deadZone);
+    var intensity = Math.min(t, 1.0);
+    // Ease-in curve so gentle motion stays gentle
+    intensity = intensity * intensity;
+
     var SP = SHUFFLE_PHYSICS;
+    // Base force scales: gentle = 15, violent = 100
+    var baseForce = 15 + intensity * 85;
+    var randomForce = 5 + intensity * 60;
+    var spinForce = 0.5 + intensity * 3.5;
+
+    // Normalize direction from accelerometer
+    var dirMag = Math.sqrt(ax * ax + ay * ay) || 1;
+    var dirX = ax / dirMag;
+    var dirY = -ay / dirMag; // flip Y for screen coords
+
     for (var i = 0; i < _shufflePhysicsBodies.length; i++) {
       var b = _shufflePhysicsBodies[i];
       if (b.isStatic) continue; // skip tiles locked in slots
-      // Use accelerometer direction for realistic feel
-      var vx = ax * SP.scatterForce * 80 * forceMult;
-      var vy = -ay * SP.scatterForce * 80 * forceMult; // flip Y for screen coords
-      // Add randomness
-      vx += (Math.random() - 0.5) * SP.scatterForce * 100 * forceMult;
-      vy += (Math.random() - 0.5) * SP.scatterForce * 100 * forceMult;
+
+      // Directional push + randomness
+      var vx = dirX * baseForce * SP.scatterForce + (Math.random() - 0.5) * randomForce * SP.scatterForce;
+      var vy = dirY * baseForce * SP.scatterForce + (Math.random() - 0.5) * randomForce * SP.scatterForce;
+
+      // For gentle motion, nudge existing velocity instead of replacing it
+      if (intensity < 0.3) {
+        vx = b.velocity.x * 0.8 + vx * 0.5;
+        vy = b.velocity.y * 0.8 + vy * 0.5;
+      }
+
       Matter.Body.setVelocity(b, { x: vx, y: vy });
-      Matter.Body.setAngularVelocity(b, (Math.random() - 0.5) * SP.scatterSpin * 4 * forceMult);
+      Matter.Body.setAngularVelocity(b, (Math.random() - 0.5) * SP.scatterSpin * spinForce);
     }
   };
   window.addEventListener('devicemotion', _sandboxShakeHandler);
