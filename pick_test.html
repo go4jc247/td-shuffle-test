@@ -1,0 +1,583 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+<title>Pick Phase Test — Touch Physics</title>
+<style>
+  html,body{
+    height:100%; margin:0; overflow:hidden;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:rgba(255,255,255,0.95);
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none; user-select: none;
+    touch-action: none;
+  }
+  #table{
+    position:absolute; inset:0;
+    background: radial-gradient(ellipse at 50% 50%, #1a8f37 0%, #0f6e2a 60%, #0a4f1d 100%);
+  }
+  .tile{
+    position:absolute; width:56px; height:112px;
+    border-radius:10px;
+    background:#d7d7d7;
+    border:2px solid #bbb;
+    box-shadow: 2px 3px 8px rgba(0,0,0,0.4);
+    transform-origin: 28px 56px;
+    will-change: transform;
+    pointer-events: none;
+  }
+  .tile .pip-top, .tile .pip-bot{
+    position:absolute; left:4px; right:4px; height:50%;
+    display:flex; flex-wrap:wrap; align-items:center; justify-content:center;
+    gap:2px; padding:4px;
+  }
+  .tile .pip-top{ top:0; border-bottom:2px solid #999; }
+  .tile .pip-bot{ bottom:0; }
+  .tile .dot{
+    width:10px; height:10px; border-radius:50%;
+    background:#222;
+  }
+  .tile.face-down{
+    background: linear-gradient(135deg, #2a4a8a 0%, #1a2a5a 100%);
+    border-color: #3a5a9a;
+  }
+  .tile.face-down .pip-top, .tile.face-down .pip-bot{ display:none; }
+  .tile.grabbed{
+    box-shadow: 4px 6px 16px rgba(0,0,0,0.6);
+    z-index: 100;
+  }
+  .tile.in-zone{
+    outline: 2px solid rgba(255,215,0,0.7);
+    outline-offset: 2px;
+  }
+  .tile.claimed{
+    outline: 2px solid rgba(34,197,94,0.9);
+    outline-offset: 2px;
+  }
+  #playerZone{
+    position:absolute; bottom:0; left:0; right:0; height:22%;
+    border-top: 2px dashed rgba(255,255,255,0.25);
+    background: linear-gradient(to top, rgba(0,0,0,0.15), transparent);
+    pointer-events: none;
+  }
+  #hud{
+    position:absolute; top:8px; left:50%; transform:translateX(-50%);
+    z-index:200; background:rgba(0,0,0,0.7); color:#fff;
+    padding:6px 16px; border-radius:16px;
+    font-size:13px; font-weight:700;
+    pointer-events:none;
+  }
+  #touchDebug{
+    position:absolute; top:50px; left:8px; z-index:200;
+    background:rgba(0,0,0,0.6); color:#0f0;
+    padding:6px 10px; border-radius:8px;
+    font-size:10px; font-family:monospace;
+    pointer-events:none; white-space:pre;
+    max-height:40%; overflow:hidden;
+  }
+  #resetBtn{
+    position:absolute; top:8px; right:8px; z-index:200;
+    background:rgba(239,68,68,0.8); color:#fff; border:none;
+    padding:8px 14px; border-radius:8px; font-size:12px; font-weight:700;
+    cursor:pointer;
+  }
+  .touch-ring{
+    position:absolute; border-radius:50%;
+    border:2px solid rgba(255,255,255,0.4);
+    background:rgba(255,255,255,0.08);
+    pointer-events:none; z-index:50;
+    transform:translate(-50%,-50%);
+  }
+</style>
+</head>
+<body>
+<div id="table"></div>
+<div id="playerZone"></div>
+<div id="hud">Pick your 7 dominoes — drag them to your zone</div>
+<div id="touchDebug"></div>
+<button id="resetBtn">Reset</button>
+
+<script>
+// ── CONFIG ──
+var HAND_SIZE = 7;
+var TILE_COUNT = 28; // double-6 set
+var TILE_W = 56, TILE_H = 112;
+var CLAIM_MS = 800; // ms tile must stay in zone to be claimed
+var MIN_GRAB_RADIUS = 30; // fingertip
+var MAX_GRAB_RADIUS = 90; // flat palm
+var TOUCH_RADIUS_SCALE = 3.0; // multiplier for touch radiusX/Y → grab radius
+var FORCE_RADIUS_BONUS = 40; // extra grab radius from hard press (force=1)
+
+// ── STATE ──
+var tiles = [];
+var claimed = [];
+var activeTouches = {}; // touchId → { x, y, grabRadius, grabbedTiles:[], ring }
+var mouseGrab = null; // { x, y, grabRadius, grabbedTiles:[] }
+var debugLines = [];
+
+var tableEl = document.getElementById('table');
+var zoneEl = document.getElementById('playerZone');
+var hudEl = document.getElementById('hud');
+var debugEl = document.getElementById('touchDebug');
+
+// ── TILE CREATION ──
+function makePips(n) {
+  var html = '';
+  for (var i = 0; i < n; i++) html += '<div class="dot"></div>';
+  return html;
+}
+
+function createTiles() {
+  tiles = [];
+  claimed = [];
+  tableEl.querySelectorAll('.tile').forEach(function(t){ t.remove(); });
+
+  var idx = 0;
+  for (var a = 0; a <= 6; a++) {
+    for (var b = a; b <= 6; b++) {
+      var el = document.createElement('div');
+      el.className = 'tile face-down';
+      el.innerHTML = '<div class="pip-top">' + makePips(a) + '</div><div class="pip-bot">' + makePips(b) + '</div>';
+
+      // Random position in center area
+      var rect = tableEl.getBoundingClientRect();
+      var cx = rect.width * 0.5;
+      var cy = rect.height * 0.4;
+      var spread = Math.min(rect.width, rect.height) * 0.25;
+      var tx = cx + (Math.random() - 0.5) * spread * 2 - TILE_W / 2;
+      var ty = cy + (Math.random() - 0.5) * spread - TILE_H / 2;
+      var rz = Math.random() * 360;
+
+      el.style.transform = 'translate(' + tx + 'px,' + ty + 'px) rotate(' + rz + 'deg) scale(0.45)';
+      el._tx = tx; el._ty = ty; el._rz = rz; el._scale = 0.45;
+      el._tileA = a; el._tileB = b;
+      el._idx = idx;
+      el._grabbed = false;
+      el._inZone = false;
+      el._zoneTimer = null;
+      el._claimed = false;
+      el._vx = 0; el._vy = 0; // velocity for toss
+
+      tableEl.appendChild(el);
+      tiles.push(el);
+      idx++;
+    }
+  }
+}
+
+function updateTileTransform(el) {
+  el.style.transform = 'translate(' + el._tx + 'px,' + el._ty + 'px) rotate(' + el._rz + 'deg) scale(' + el._scale + ')';
+}
+
+// ── ZONE DETECTION ──
+function isInPlayerZone(el) {
+  var rect = tableEl.getBoundingClientRect();
+  var zoneTop = rect.height * 0.78;
+  var tileCY = el._ty + TILE_H * el._scale * 0.5;
+  return tileCY > zoneTop;
+}
+
+function updateZoneStatus(el) {
+  if (el._claimed) return;
+  var inZone = isInPlayerZone(el);
+
+  if (inZone && !el._inZone) {
+    // Entered zone
+    el._inZone = true;
+    el.classList.add('in-zone');
+    el._zoneTimer = setTimeout(function() {
+      if (el._inZone && !el._claimed && !el._grabbed && claimed.length < HAND_SIZE) {
+        claimTile(el);
+      }
+    }, CLAIM_MS);
+  } else if (!inZone && el._inZone) {
+    // Left zone
+    el._inZone = false;
+    el.classList.remove('in-zone');
+    if (el._zoneTimer) { clearTimeout(el._zoneTimer); el._zoneTimer = null; }
+  }
+}
+
+function claimTile(el) {
+  if (el._claimed || claimed.length >= HAND_SIZE) return;
+  el._claimed = true;
+  el._inZone = true;
+  el.classList.remove('in-zone');
+  el.classList.add('claimed');
+
+  // Reveal face
+  el.classList.remove('face-down');
+
+  // Snap to hand position
+  claimed.push(el);
+  arrangeClaimed();
+  updateHUD();
+}
+
+function unclaimTile(el) {
+  if (!el._claimed) return;
+  el._claimed = false;
+  el.classList.remove('claimed');
+  el.classList.add('face-down');
+  var idx = claimed.indexOf(el);
+  if (idx >= 0) claimed.splice(idx, 1);
+  arrangeClaimed();
+  updateHUD();
+}
+
+function arrangeClaimed() {
+  var rect = tableEl.getBoundingClientRect();
+  var spacing = Math.min(62, (rect.width - 40) / Math.max(claimed.length, 1));
+  var totalW = spacing * (claimed.length - 1) + TILE_W * 0.45;
+  var startX = (rect.width - totalW) / 2;
+  var baseY = rect.height * 0.84;
+
+  for (var i = 0; i < claimed.length; i++) {
+    var el = claimed[i];
+    el._tx = startX + i * spacing - TILE_W * 0.45 / 2;
+    el._ty = baseY;
+    el._rz = 0;
+    el._scale = 0.45;
+    el.style.transition = 'transform 0.3s ease';
+    updateTileTransform(el);
+    setTimeout((function(e){ return function(){ e.style.transition = ''; }; })(el), 350);
+  }
+}
+
+function updateHUD() {
+  hudEl.textContent = 'Picked: ' + claimed.length + ' / ' + HAND_SIZE;
+  if (claimed.length >= HAND_SIZE) {
+    hudEl.textContent += ' — Done!';
+    hudEl.style.background = 'rgba(34,197,94,0.8)';
+  } else {
+    hudEl.style.background = 'rgba(0,0,0,0.7)';
+  }
+}
+
+// ── GRAB RADIUS FROM TOUCH ──
+function getGrabRadius(touch) {
+  // radiusX/radiusY: contact ellipse in CSS px (Safari iOS supports this)
+  var rx = touch.radiusX || 0;
+  var ry = touch.radiusY || 0;
+  var avgRadius = (rx + ry) / 2;
+
+  // force: 0-1 pressure (3D Touch / haptic)
+  var force = touch.force || 0;
+
+  var grabR = MIN_GRAB_RADIUS;
+  if (avgRadius > 0) {
+    grabR = Math.max(MIN_GRAB_RADIUS, Math.min(MAX_GRAB_RADIUS, avgRadius * TOUCH_RADIUS_SCALE));
+  }
+  // Hard press = wider grab
+  grabR += force * FORCE_RADIUS_BONUS;
+
+  return Math.min(grabR, MAX_GRAB_RADIUS);
+}
+
+// ── FIND TILES IN GRAB AREA ──
+function findTilesInRadius(cx, cy, radius) {
+  var found = [];
+  for (var i = 0; i < tiles.length; i++) {
+    var el = tiles[i];
+    if (el._claimed) continue;
+    var tcx = el._tx + TILE_W * el._scale * 0.5;
+    var tcy = el._ty + TILE_H * el._scale * 0.5;
+    var dx = cx - tcx, dy = cy - tcy;
+    var dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < radius + TILE_W * el._scale * 0.3) {
+      found.push({ el: el, dist: dist });
+    }
+  }
+  found.sort(function(a, b) { return a.dist - b.dist; });
+  return found.map(function(f) { return f.el; });
+}
+
+// ── TOUCH RING VISUALIZATION ──
+function createTouchRing(radius) {
+  var ring = document.createElement('div');
+  ring.className = 'touch-ring';
+  ring.style.width = ring.style.height = (radius * 2) + 'px';
+  tableEl.appendChild(ring);
+  return ring;
+}
+
+function updateTouchRing(ring, x, y, radius) {
+  ring.style.width = ring.style.height = (radius * 2) + 'px';
+  ring.style.left = x + 'px';
+  ring.style.top = y + 'px';
+}
+
+function removeTouchRing(ring) {
+  if (ring && ring.parentNode) ring.remove();
+}
+
+// ── TOUCH HANDLERS ──
+tableEl.addEventListener('touchstart', function(e) {
+  e.preventDefault();
+  var br = tableEl.getBoundingClientRect();
+
+  for (var i = 0; i < e.changedTouches.length; i++) {
+    var t = e.changedTouches[i];
+    var x = t.clientX - br.left;
+    var y = t.clientY - br.top;
+    var grabR = getGrabRadius(t);
+
+    var ring = createTouchRing(grabR);
+    updateTouchRing(ring, x, y, grabR);
+
+    var grabbed = findTilesInRadius(x, y, grabR);
+    grabbed.forEach(function(el) {
+      el._grabbed = true;
+      el._grabOffX = el._tx - x;
+      el._grabOffY = el._ty - y;
+      el._vx = 0; el._vy = 0;
+      el.classList.add('grabbed');
+      el.style.zIndex = 100;
+      // If tile was claimed, unclaim it (pulling it back out)
+      if (el._claimed) unclaimTile(el);
+    });
+
+    activeTouches[t.identifier] = {
+      x: x, y: y, px: x, py: y,
+      grabRadius: grabR,
+      grabbedTiles: grabbed,
+      ring: ring,
+      touchRef: t
+    };
+
+    addDebug('START id=' + t.identifier + ' r=' + grabR.toFixed(0) + ' radiusXY=' + (t.radiusX||0).toFixed(1) + '/' + (t.radiusY||0).toFixed(1) + ' force=' + (t.force||0).toFixed(2) + ' tiles=' + grabbed.length);
+  }
+}, { passive: false });
+
+tableEl.addEventListener('touchmove', function(e) {
+  e.preventDefault();
+  var br = tableEl.getBoundingClientRect();
+
+  for (var i = 0; i < e.changedTouches.length; i++) {
+    var t = e.changedTouches[i];
+    var state = activeTouches[t.identifier];
+    if (!state) continue;
+
+    var x = t.clientX - br.left;
+    var y = t.clientY - br.top;
+
+    // Update grab radius live (finger pressure/area can change mid-drag)
+    var newR = getGrabRadius(t);
+    state.grabRadius = newR;
+    updateTouchRing(state.ring, x, y, newR);
+
+    // Check for new tiles entering grab radius
+    var newGrabs = findTilesInRadius(x, y, newR);
+    newGrabs.forEach(function(el) {
+      if (state.grabbedTiles.indexOf(el) < 0 && !el._grabbed) {
+        el._grabbed = true;
+        el._grabOffX = el._tx - x;
+        el._grabOffY = el._ty - y;
+        el._vx = 0; el._vy = 0;
+        el.classList.add('grabbed');
+        el.style.zIndex = 100;
+        if (el._claimed) unclaimTile(el);
+        state.grabbedTiles.push(el);
+      }
+    });
+
+    // Move all grabbed tiles
+    var dx = x - state.px;
+    var dy = y - state.py;
+    state.grabbedTiles.forEach(function(el) {
+      el._tx += dx;
+      el._ty += dy;
+      el._vx = dx; el._vy = dy;
+      updateTileTransform(el);
+    });
+
+    state.px = state.x; state.py = state.y;
+    state.x = x; state.y = y;
+  }
+}, { passive: false });
+
+tableEl.addEventListener('touchend', function(e) {
+  e.preventDefault();
+
+  for (var i = 0; i < e.changedTouches.length; i++) {
+    var t = e.changedTouches[i];
+    var state = activeTouches[t.identifier];
+    if (!state) continue;
+
+    removeTouchRing(state.ring);
+
+    // Release all grabbed tiles with a little momentum
+    state.grabbedTiles.forEach(function(el) {
+      el._grabbed = false;
+      el.classList.remove('grabbed');
+      el.style.zIndex = '';
+
+      // Apply toss momentum
+      applyMomentum(el);
+
+      // Check zone after momentum settles
+      setTimeout(function() { updateZoneStatus(el); }, 50);
+    });
+
+    addDebug('END id=' + t.identifier + ' tiles=' + state.grabbedTiles.length);
+    delete activeTouches[t.identifier];
+  }
+}, { passive: false });
+
+// ── MOUSE FALLBACK (for desktop testing) ──
+var _mouseDown = false;
+var _mouseGrabbed = [];
+var _mousePX = 0, _mousePY = 0;
+var _mouseRing = null;
+
+tableEl.addEventListener('mousedown', function(e) {
+  if (e.button !== 0) return;
+  _mouseDown = true;
+  var br = tableEl.getBoundingClientRect();
+  var x = e.clientX - br.left;
+  var y = e.clientY - br.top;
+  var grabR = e.shiftKey ? 70 : 35; // shift = bigger grab (simulating palm)
+
+  _mouseRing = createTouchRing(grabR);
+  updateTouchRing(_mouseRing, x, y, grabR);
+
+  _mouseGrabbed = findTilesInRadius(x, y, grabR);
+  _mouseGrabbed.forEach(function(el) {
+    el._grabbed = true;
+    el._grabOffX = el._tx - x;
+    el._grabOffY = el._ty - y;
+    el._vx = 0; el._vy = 0;
+    el.classList.add('grabbed');
+    el.style.zIndex = 100;
+    if (el._claimed) unclaimTile(el);
+  });
+  _mousePX = x; _mousePY = y;
+
+  addDebug('MOUSE dn r=' + grabR + ' tiles=' + _mouseGrabbed.length + (e.shiftKey ? ' (SHIFT=palm)' : ''));
+});
+
+tableEl.addEventListener('mousemove', function(e) {
+  if (!_mouseDown) return;
+  var br = tableEl.getBoundingClientRect();
+  var x = e.clientX - br.left;
+  var y = e.clientY - br.top;
+  var dx = x - _mousePX;
+  var dy = y - _mousePY;
+  var grabR = e.shiftKey ? 70 : 35;
+
+  if (_mouseRing) updateTouchRing(_mouseRing, x, y, grabR);
+
+  // Pick up new tiles that enter radius
+  var newGrabs = findTilesInRadius(x, y, grabR);
+  newGrabs.forEach(function(el) {
+    if (_mouseGrabbed.indexOf(el) < 0 && !el._grabbed) {
+      el._grabbed = true;
+      el._grabOffX = el._tx - x;
+      el._grabOffY = el._ty - y;
+      el._vx = 0; el._vy = 0;
+      el.classList.add('grabbed');
+      el.style.zIndex = 100;
+      if (el._claimed) unclaimTile(el);
+      _mouseGrabbed.push(el);
+    }
+  });
+
+  _mouseGrabbed.forEach(function(el) {
+    el._tx += dx;
+    el._ty += dy;
+    el._vx = dx; el._vy = dy;
+    updateTileTransform(el);
+  });
+  _mousePX = x; _mousePY = y;
+});
+
+window.addEventListener('mouseup', function(e) {
+  if (!_mouseDown) return;
+  _mouseDown = false;
+  removeTouchRing(_mouseRing);
+  _mouseRing = null;
+
+  _mouseGrabbed.forEach(function(el) {
+    el._grabbed = false;
+    el.classList.remove('grabbed');
+    el.style.zIndex = '';
+    applyMomentum(el);
+    setTimeout(function() { updateZoneStatus(el); }, 50);
+  });
+  _mouseGrabbed = [];
+});
+
+// ── MOMENTUM / TOSS ──
+function applyMomentum(el) {
+  if (Math.abs(el._vx) < 1 && Math.abs(el._vy) < 1) return;
+
+  var friction = 0.88;
+  var bounceRestitution = 0.4;
+
+  function step() {
+    if (el._grabbed || el._claimed) return; // stop if re-grabbed or claimed
+
+    el._vx *= friction;
+    el._vy *= friction;
+
+    el._tx += el._vx;
+    el._ty += el._vy;
+    el._rz += el._vx * 0.3; // spin from lateral motion
+
+    // Bounce off edges
+    var rect = tableEl.getBoundingClientRect();
+    var hw = TILE_W * el._scale * 0.5;
+    var hh = TILE_H * el._scale * 0.5;
+
+    if (el._tx + hw < 0) { el._tx = -hw; el._vx = Math.abs(el._vx) * bounceRestitution; }
+    if (el._tx + hw > rect.width) { el._tx = rect.width - hw; el._vx = -Math.abs(el._vx) * bounceRestitution; }
+    if (el._ty + hh < 0) { el._ty = -hh; el._vy = Math.abs(el._vy) * bounceRestitution; }
+    if (el._ty + hh > rect.height) { el._ty = rect.height - hh; el._vy = -Math.abs(el._vy) * bounceRestitution; }
+
+    updateTileTransform(el);
+
+    // Check zone during slide
+    updateZoneStatus(el);
+
+    if (Math.abs(el._vx) > 0.3 || Math.abs(el._vy) > 0.3) {
+      requestAnimationFrame(step);
+    }
+  }
+  requestAnimationFrame(step);
+}
+
+// ── DEBUG ──
+function addDebug(msg) {
+  debugLines.push(msg);
+  if (debugLines.length > 12) debugLines.shift();
+  debugEl.textContent = debugLines.join('\n');
+}
+
+// ── RESET ──
+document.getElementById('resetBtn').addEventListener('click', function() {
+  // Clean up rings
+  for (var id in activeTouches) {
+    removeTouchRing(activeTouches[id].ring);
+  }
+  activeTouches = {};
+  _mouseGrabbed = [];
+  _mouseDown = false;
+  claimed = [];
+  debugLines = [];
+  debugEl.textContent = '';
+  hudEl.style.background = 'rgba(0,0,0,0.7)';
+  createTiles();
+  updateHUD();
+});
+
+// ── INIT ──
+createTiles();
+updateHUD();
+addDebug('Touch a tile to grab. Drag to your zone (bottom).');
+addDebug('Fingertip=small grab, thumb/palm=wide grab.');
+addDebug('Desktop: click=fingertip, shift+click=palm.');
+</script>
+</body>
+</html>
