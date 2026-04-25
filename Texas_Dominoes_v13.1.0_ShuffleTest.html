@@ -16578,6 +16578,23 @@ var SHUFFLE_PHYSICS = {
   showShadows: false,        // show shadows during shuffle (perf hit)
   shadowOpacity: 0.5,        // shadow opacity if shown
 };
+// Store defaults for Reset button
+var _shufflePhysicsDefaults = JSON.parse(JSON.stringify(SHUFFLE_PHYSICS));
+// Auto-load saved settings on startup
+(function() {
+  try {
+    var saved = localStorage.getItem('shufflePhysicsSettings');
+    if (saved) {
+      var data = JSON.parse(saved);
+      for (var key in data) {
+        if (data.hasOwnProperty(key) && SHUFFLE_PHYSICS.hasOwnProperty(key)) {
+          SHUFFLE_PHYSICS[key] = data[key];
+        }
+      }
+      console.log('[Shuffle] Loaded saved settings from localStorage');
+    }
+  } catch(e) {}
+})();
 
 async function performShuffleAnimation() {
   // This is now a physics-driven interactive shuffle
@@ -17040,15 +17057,19 @@ function _shufflePhysicsLoop() {
     }
   }
 
-  // Record pointer data if recording
+  // Record pointer data if recording (all active force points)
   if (_shuffleRecording && ptr.active) {
-    _shuffleRecordData.push({
-      t: performance.now() - _shuffleRecordStart,
-      x: ptr.x,
-      y: ptr.y,
-      vx: ptr.vx,
-      vy: ptr.vy
-    });
+    var recT = performance.now() - _shuffleRecordStart;
+    // Record primary pointer
+    _shuffleRecordData.push({ t: recT, x: ptr.x, y: ptr.y, vx: ptr.vx, vy: ptr.vy });
+    // Record additional touch pointers (finger 2+)
+    if (ptr._isTouch) {
+      var tkeys = Object.keys(_shuffleTouchPointers);
+      for (var tk = 1; tk < tkeys.length; tk++) {
+        var tp = _shuffleTouchPointers[tkeys[tk]];
+        _shuffleRecordData.push({ t: recT, x: tp.x, y: tp.y, vx: tp.vx, vy: tp.vy });
+      }
+    }
   }
 
   // Step physics
@@ -17184,25 +17205,30 @@ function _createShuffleUI(rect) {
           vy: +(pt.vy / ac.r).toFixed(4)
         };
       });
-      var json = JSON.stringify({ points: normalized, duration: normalized[normalized.length - 1].t }, null, 1);
+      var recording = { points: normalized, duration: normalized[normalized.length - 1].t, ts: Date.now() };
 
-      // Try to download as file
+      // Save to localStorage as part of recordings array
+      var savedRecs = [];
+      try { var sr = localStorage.getItem('shuffleRecordings'); if (sr) savedRecs = JSON.parse(sr); } catch(e) {}
+      savedRecs.push(recording);
+      localStorage.setItem('shuffleRecordings', JSON.stringify(savedRecs));
+
+      // Update count display
+      var countEl = document.getElementById('shuffleRecCount');
+      if (countEl) countEl.textContent = savedRecs.length + ' shuffle recording' + (savedRecs.length !== 1 ? 's' : '') + ' saved';
+
+      // Also download as file
+      var json = JSON.stringify(recording, null, 1);
       var blob = new Blob([json], { type: 'application/json' });
       var url = URL.createObjectURL(blob);
       var a = document.createElement('a');
       a.href = url;
-      a.download = 'shuffle_recording.json';
+      a.download = 'shuffle_recording_' + savedRecs.length + '.json';
       a.click();
       URL.revokeObjectURL(url);
 
-      // Also copy to clipboard
-      navigator.clipboard.writeText(json).then(function() {
-        exportBtn.textContent = 'Copied!';
-        setTimeout(function() { exportBtn.textContent = 'Export'; }, 1500);
-      }).catch(function() {
-        exportBtn.textContent = 'Downloaded';
-        setTimeout(function() { exportBtn.textContent = 'Export'; }, 1500);
-      });
+      exportBtn.textContent = 'Saved #' + savedRecs.length + '!';
+      setTimeout(function() { exportBtn.textContent = 'Export'; }, 2000);
     });
     btnBar.appendChild(exportBtn);
 
@@ -17438,6 +17464,8 @@ function _createShuffleSettingsPanel(tableEl) {
     sl.type = 'range';
     sl.min = min; sl.max = max; sl.step = step; sl.value = SP[key];
     sl.style.cssText = 'width:100%;-webkit-appearance:none;height:3px;background:rgba(255,255,255,0.15);border-radius:2px;outline:none;cursor:pointer;';
+    sl._spKey = key;
+    sl._spDecimals = decimals;
     sl.addEventListener('input', function() {
       var v = parseFloat(sl.value);
       SP[key] = v;
@@ -17528,6 +17556,113 @@ function _createShuffleSettingsPanel(tableEl) {
   section('Visual');
   toggle('Show Shadows', 'showShadows');
   slider('Shadow Opacity', 'shadowOpacity', 0.1, 1.0, 0.05, 2);
+
+  // ── Save / Load ──
+  section('Save / Load');
+
+  var saveBtnStyle = 'width:100%;color:#fff;border:none;padding:8px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;margin-bottom:6px;';
+
+  // Save settings to localStorage
+  var saveBtn = document.createElement('button');
+  saveBtn.textContent = 'Save Settings';
+  saveBtn.style.cssText = saveBtnStyle + 'background:rgba(34,197,94,0.8);';
+  saveBtn.addEventListener('click', function() {
+    var data = {};
+    for (var key in SP) {
+      if (SP.hasOwnProperty(key)) data[key] = SP[key];
+    }
+    localStorage.setItem('shufflePhysicsSettings', JSON.stringify(data));
+    saveBtn.textContent = 'Saved!';
+    setTimeout(function() { saveBtn.textContent = 'Save Settings'; }, 1500);
+  });
+  panel.appendChild(saveBtn);
+
+  // Load settings from localStorage
+  var loadBtn = document.createElement('button');
+  loadBtn.textContent = 'Load Settings';
+  loadBtn.style.cssText = saveBtnStyle + 'background:rgba(59,130,246,0.8);';
+  loadBtn.addEventListener('click', function() {
+    var saved = localStorage.getItem('shufflePhysicsSettings');
+    if (!saved) { loadBtn.textContent = 'No saved settings'; setTimeout(function() { loadBtn.textContent = 'Load Settings'; }, 1500); return; }
+    var data = JSON.parse(saved);
+    for (var key in data) {
+      if (data.hasOwnProperty(key) && SP.hasOwnProperty(key)) SP[key] = data[key];
+    }
+    _applyShuffleSettingsLive();
+    // Refresh sliders
+    var sliders = panel.querySelectorAll('input[type=range]');
+    sliders.forEach(function(sl) {
+      if (sl._spKey && SP[sl._spKey] !== undefined) {
+        sl.value = SP[sl._spKey];
+        var valEl = sl.parentNode.previousSibling.querySelector('span:last-child');
+        if (valEl) valEl.textContent = sl._spDecimals === 0 ? Math.round(SP[sl._spKey]) : Number(SP[sl._spKey]).toFixed(sl._spDecimals);
+      }
+    });
+    loadBtn.textContent = 'Loaded!';
+    setTimeout(function() { loadBtn.textContent = 'Load Settings'; }, 1500);
+  });
+  panel.appendChild(loadBtn);
+
+  // Reset to defaults
+  var resetBtn = document.createElement('button');
+  resetBtn.textContent = 'Reset to Defaults';
+  resetBtn.style.cssText = saveBtnStyle + 'background:rgba(239,68,68,0.8);';
+  resetBtn.addEventListener('click', function() {
+    var defaults = _shufflePhysicsDefaults;
+    for (var key in defaults) {
+      if (defaults.hasOwnProperty(key)) SP[key] = defaults[key];
+    }
+    _applyShuffleSettingsLive();
+    var sliders = panel.querySelectorAll('input[type=range]');
+    sliders.forEach(function(sl) {
+      if (sl._spKey && SP[sl._spKey] !== undefined) {
+        sl.value = SP[sl._spKey];
+        var valEl = sl.parentNode.previousSibling.querySelector('span:last-child');
+        if (valEl) valEl.textContent = sl._spDecimals === 0 ? Math.round(SP[sl._spKey]) : Number(SP[sl._spKey]).toFixed(sl._spDecimals);
+      }
+    });
+    resetBtn.textContent = 'Reset!';
+    setTimeout(function() { resetBtn.textContent = 'Reset to Defaults'; }, 1500);
+  });
+  panel.appendChild(resetBtn);
+
+  // Export ALL (settings + recordings) as a single JSON
+  var exportAllBtn = document.createElement('button');
+  exportAllBtn.textContent = 'Export All (Settings + Recordings)';
+  exportAllBtn.style.cssText = saveBtnStyle + 'background:rgba(234,179,8,0.8);margin-top:8px;';
+  exportAllBtn.addEventListener('click', function() {
+    var data = { settings: {}, recordings: [] };
+    for (var key in SP) {
+      if (SP.hasOwnProperty(key)) data.settings[key] = SP[key];
+    }
+    var savedRecs = localStorage.getItem('shuffleRecordings');
+    if (savedRecs) data.recordings = JSON.parse(savedRecs);
+    var json = JSON.stringify(data, null, 1);
+    var blob = new Blob([json], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'shuffle_config.json';
+    a.click();
+    URL.revokeObjectURL(url);
+    navigator.clipboard.writeText(json).then(function() {
+      exportAllBtn.textContent = 'Copied + Downloaded!';
+      setTimeout(function() { exportAllBtn.textContent = 'Export All (Settings + Recordings)'; }, 2000);
+    }).catch(function() {
+      exportAllBtn.textContent = 'Downloaded!';
+      setTimeout(function() { exportAllBtn.textContent = 'Export All (Settings + Recordings)'; }, 2000);
+    });
+  });
+  panel.appendChild(exportAllBtn);
+
+  // Show recording count
+  var recCountEl = document.createElement('div');
+  recCountEl.style.cssText = 'color:rgba(255,255,255,0.5);font-size:10px;margin-top:6px;text-align:center;';
+  var savedRecs = localStorage.getItem('shuffleRecordings');
+  var recCount = savedRecs ? JSON.parse(savedRecs).length : 0;
+  recCountEl.textContent = recCount + ' shuffle recording' + (recCount !== 1 ? 's' : '') + ' saved';
+  recCountEl.id = 'shuffleRecCount';
+  panel.appendChild(recCountEl);
 }
 
 // Live-apply settings changes during shuffle
