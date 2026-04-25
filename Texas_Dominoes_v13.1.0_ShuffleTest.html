@@ -16743,44 +16743,38 @@ function _autoMixAI() {
 }
 
 // Hide/show table UI elements during shuffle for a clean felt look
+var _shuffleUIHidden = false;
 function _setShuffleTableUI(visible) {
+  _shuffleUIHidden = !visible;
   var opacity = visible ? '1' : '0';
   var transition = 'opacity 0.5s ease';
-  var els = [];
-  // Player indicators
-  for (var p = 1; p <= 6; p++) {
-    var ind = document.getElementById('playerIndicator' + p);
-    if (ind) els.push(ind);
-  }
-  // Trick history background
-  var thBg = document.getElementById('trickHistoryBg');
-  if (thBg) els.push(thBg);
-  // Trump display
-  var trump = document.getElementById('trumpDisplay');
-  if (trump) els.push(trump);
-  // Boneyard
-  var by2 = document.getElementById('boneyard2Container');
-  if (by2) els.push(by2);
-  var by2t = document.getElementById('boneyard2Toggle');
-  if (by2t) els.push(by2t);
-  // Status bar
-  var status = document.getElementById('statusBar');
-  if (status) els.push(status);
-  // Topbar (scores, marks)
-  var topbar = document.getElementById('topbar');
-  if (topbar) els.push(topbar);
-  // Placeholders (hand, played, lead)
-  var placeholders = document.querySelectorAll('.placeholder');
-  for (var i = 0; i < placeholders.length; i++) els.push(placeholders[i]);
-  // Lead pip square
-  var leadPips = document.querySelectorAll('.leadPipSquare');
-  for (var i = 0; i < leadPips.length; i++) els.push(leadPips[i]);
 
-  for (var i = 0; i < els.length; i++) {
-    els[i].style.transition = transition;
-    els[i].style.opacity = opacity;
-    if (!visible) els[i].style.pointerEvents = 'none';
-    else els[i].style.pointerEvents = '';
+  // Hide everything inside tableMain EXCEPT spriteLayer, shadowLayer, and shuffle UI
+  var keepVisible = { 'spriteLayer':1, 'shadowLayer':1, 'shufflePhysicsOverlay':1,
+    'shuffleBtnBar':1, 'shuffleHint':1, 'shuffleAreaRing':1, 'shuffleSettingsPanel':1,
+    'pickPhaseOverlay':1, 'pickHint':1, 'pickCounter':1 };
+  var tableMain = document.getElementById('tableMain');
+  if (tableMain) {
+    for (var i = 0; i < tableMain.children.length; i++) {
+      var child = tableMain.children[i];
+      if (keepVisible[child.id]) continue;
+      child.style.transition = transition;
+      child.style.opacity = opacity;
+      if (!visible) child.style.pointerEvents = 'none';
+      else child.style.pointerEvents = '';
+    }
+  }
+
+  // Also hide elements outside tableMain
+  var outerEls = ['topbar', 'statusBar', 'trumpDisplay'];
+  for (var i = 0; i < outerEls.length; i++) {
+    var el = document.getElementById(outerEls[i]);
+    if (el) {
+      el.style.transition = transition;
+      el.style.opacity = opacity;
+      if (!visible) el.style.pointerEvents = 'none';
+      else el.style.pointerEvents = '';
+    }
   }
 }
 
@@ -19317,6 +19311,8 @@ function createPlaceholders(){
     text.textContent = '';  // Will be set during bidding
     el.appendChild(text);
 
+    // If shuffle UI is hidden, hide this placeholder too
+    if (_shuffleUIHidden) { el.style.opacity = '0'; el.style.pointerEvents = 'none'; }
     tableMain.appendChild(el);
     placeholderElements[`p${p}`] = el;
   }
