@@ -16578,6 +16578,15 @@ var SHUFFLE_PHYSICS = {
   // ── Visual ──
   showShadows: false,
   shadowOpacity: 0.5,
+
+  // ── Motion / Tilt ──
+  motionEnabled: true,
+  motionSensitivity: 5.0,  // overall force multiplier (1=subtle, 10=extreme)
+  motionDeadZone: 0.5,     // m/s^2 — ignore below this
+  tiltGravity: true,       // continuous tilt = gravity pull
+  tiltStrength: 3.0,       // how strong tilt gravity pulls (1=gentle, 10=strong)
+  shakeThreshold: 3.0,     // m/s^2 — when shake burst kicks in on top of tilt
+  shakeMaxForce: 8.0,      // max force multiplier for violent shakes
 };
 // Store defaults for Reset button
 var _shufflePhysicsDefaults = JSON.parse(JSON.stringify(SHUFFLE_PHYSICS));
@@ -17579,6 +17588,16 @@ function _createShuffleSettingsPanel(tableEl) {
   toggle('Show Shadows', 'showShadows');
   slider('Shadow Opacity', 'shadowOpacity', 0.1, 1.0, 0.05, 2);
 
+  // ── Motion / Tilt ──
+  section('Motion / Tilt');
+  toggle('Motion Enabled', 'motionEnabled');
+  slider('Sensitivity', 'motionSensitivity', 0.5, 10, 0.5, 1);
+  slider('Dead Zone', 'motionDeadZone', 0.1, 3.0, 0.1, 1);
+  toggle('Tilt Gravity', 'tiltGravity');
+  slider('Tilt Strength', 'tiltStrength', 0.5, 10, 0.5, 1);
+  slider('Shake Threshold', 'shakeThreshold', 1.0, 15, 0.5, 1);
+  slider('Shake Max Force', 'shakeMaxForce', 1.0, 15, 0.5, 1);
+
   // ── Save / Load ──
   section('Save / Load');
 
@@ -18240,27 +18259,20 @@ function _trySnapOrEject(body) {
     return true;
   }
 
-  // Check if body is near any empty slot
+  // Check if body is in the lower region of the screen — generous zone
   var tableEl = document.getElementById('tableMain');
   var tableRect = tableEl.getBoundingClientRect();
   var slotsRect = _sandboxSlotEls.getBoundingClientRect();
 
-  // Only consider snapping if the body is in the lower portion of screen (near slots)
-  var bodyScreenY = body.position.y;
-  var slotsTop = slotsRect.top - tableRect.top - 40; // 40px grace zone above slots
-  if (bodyScreenY < slotsTop) return false;
+  // Snap zone: anywhere below 60% of the table height (very generous)
+  var tableH = tableRect.height;
+  var snapZoneTop = tableH * 0.6;
+  if (body.position.y < snapZoneTop) return false;
 
-  // Find nearest empty slot
-  var bestSlot = -1, bestDist = 120; // max snap distance
-  for (var i = 0; i < _sandboxSlots.length; i++) {
-    if (_sandboxSlots[i].body) continue;
-    var center = _getSlotCenter(i);
-    var d = Math.hypot(body.position.x - center.x, body.position.y - center.y);
-    if (d < bestDist) { bestDist = d; bestSlot = i; }
-  }
-
-  if (bestSlot >= 0) {
-    _snapBodyToSlot(body, bestSlot);
+  // Find first empty slot (left to right) — no need to be near a specific slot
+  var emptySlot = _findEmptySlot();
+  if (emptySlot >= 0) {
+    _snapBodyToSlot(body, emptySlot);
     return true;
   }
   return false;
@@ -18504,71 +18516,89 @@ function _sandboxStartShakeDetection() {
 }
 
 function _sandboxBindShake() {
-  // Continuous proportional response: gentle tilt/sway moves tiles gently,
-  // hard shake sends them flying. No hard threshold — always responsive.
-  var deadZone = 1.5;   // m/s^2 — ignore tiny sensor noise
-  var gentleMax = 8;    // up to this = gentle nudge
-  var violentMin = 20;  // above this = max violence
-  var cooldownMs = 50;  // fast updates for fluid feel
-
   _sandboxShakeHandler = function(e) {
     if (!_shuffleSandboxActive || !_shufflePhysicsActive) return;
+    var SP = SHUFFLE_PHYSICS;
+    if (!SP.motionEnabled) return;
 
-    // Prefer acceleration (gravity removed) if available
-    var acc = e.acceleration;
-    var useRaw = acc && (acc.x !== null || acc.y !== null || acc.z !== null);
-    if (!useRaw) {
-      acc = e.accelerationIncludingGravity;
-      if (!acc) return;
+    // Get acceleration data — prefer gravity-removed, fall back to including gravity
+    var rawAcc = e.acceleration;
+    var hasRaw = rawAcc && (rawAcc.x !== null || rawAcc.y !== null || rawAcc.z !== null);
+    var gravAcc = e.accelerationIncludingGravity;
+
+    // ── Tilt Gravity Mode ──
+    // Uses accelerationIncludingGravity to detect phone orientation
+    // and apply a continuous "gravity" pull in that direction
+    if (SP.tiltGravity && gravAcc) {
+      var gx = gravAcc.x || 0;
+      var gy = gravAcc.y || 0;
+      // On iOS in portrait: tilting left gives negative x, tilting forward gives negative y
+      // gravity component tells us the tilt angle
+      var tiltForce = SP.tiltStrength * SP.motionSensitivity * 0.15;
+      for (var i = 0; i < _shufflePhysicsBodies.length; i++) {
+        var b = _shufflePhysicsBodies[i];
+        if (b.isStatic) continue;
+        // Apply as a continuous force (additive to current velocity)
+        Matter.Body.applyForce(b, b.position, {
+          x: gx * tiltForce * b.mass * 0.001,
+          y: -gy * tiltForce * b.mass * 0.001
+        });
+      }
     }
+
+    // ── Shake Burst Mode ──
+    // Uses acceleration (gravity removed) to detect actual shaking motion
+    var acc = hasRaw ? rawAcc : gravAcc;
+    if (!acc) return;
     var ax = acc.x || 0, ay = acc.y || 0, az = acc.z || 0;
 
     var shakeMag;
-    if (useRaw) {
+    if (hasRaw) {
       shakeMag = Math.sqrt(ax * ax + ay * ay + az * az);
     } else {
       shakeMag = Math.abs(Math.sqrt(ax * ax + ay * ay + az * az) - 9.8);
     }
-    if (shakeMag < deadZone) return;
+
+    if (shakeMag < SP.motionDeadZone) return;
 
     var now = performance.now();
-    if (now - _sandboxShakeLastTime < cooldownMs) return;
+    if (now - _sandboxShakeLastTime < 30) return; // 30ms for smooth updates
     _sandboxShakeLastTime = now;
 
-    // Smooth 0-1 intensity curve: dead zone → gentle → violent
-    // Ramps from 0 at deadZone to ~0.3 at gentleMax to 1.0 at violentMin+
-    var t = (shakeMag - deadZone) / (violentMin - deadZone);
-    var intensity = Math.min(t, 1.0);
-    // Ease-in curve so gentle motion stays gentle
-    intensity = intensity * intensity;
+    // Intensity curve: ramps from 0 at dead zone, accelerates toward max
+    var range = Math.max(SP.shakeThreshold - SP.motionDeadZone, 0.5);
+    var t = (shakeMag - SP.motionDeadZone) / range;
+    var intensity = Math.min(t, SP.shakeMaxForce);
+    // Sqrt curve so even gentle shakes produce visible movement
+    intensity = Math.sqrt(intensity);
 
-    var SP = SHUFFLE_PHYSICS;
-    // Base force scales: gentle = 15, violent = 100
-    var baseForce = 15 + intensity * 85;
-    var randomForce = 5 + intensity * 60;
-    var spinForce = 0.5 + intensity * 3.5;
+    var sens = SP.motionSensitivity;
 
-    // Normalize direction from accelerometer
+    // Force scales
+    var baseForce = intensity * sens * 4;
+    var randomAmt = intensity * sens * 1.5;
+    var spinAmt = intensity * sens * 0.4;
+
+    // Direction from accelerometer
     var dirMag = Math.sqrt(ax * ax + ay * ay) || 1;
     var dirX = ax / dirMag;
     var dirY = -ay / dirMag; // flip Y for screen coords
 
     for (var i = 0; i < _shufflePhysicsBodies.length; i++) {
       var b = _shufflePhysicsBodies[i];
-      if (b.isStatic) continue; // skip tiles locked in slots
+      if (b.isStatic) continue;
 
-      // Directional push + randomness
-      var vx = dirX * baseForce * SP.scatterForce + (Math.random() - 0.5) * randomForce * SP.scatterForce;
-      var vy = dirY * baseForce * SP.scatterForce + (Math.random() - 0.5) * randomForce * SP.scatterForce;
+      var vx = dirX * baseForce + (Math.random() - 0.5) * randomAmt;
+      var vy = dirY * baseForce + (Math.random() - 0.5) * randomAmt;
 
-      // For gentle motion, nudge existing velocity instead of replacing it
-      if (intensity < 0.3) {
-        vx = b.velocity.x * 0.8 + vx * 0.5;
-        vy = b.velocity.y * 0.8 + vy * 0.5;
+      // Below shake threshold: blend with existing velocity for gentle drift
+      if (shakeMag < SP.shakeThreshold) {
+        vx = b.velocity.x * 0.9 + vx * 0.4;
+        vy = b.velocity.y * 0.9 + vy * 0.4;
       }
 
       Matter.Body.setVelocity(b, { x: vx, y: vy });
-      Matter.Body.setAngularVelocity(b, (Math.random() - 0.5) * SP.scatterSpin * spinForce);
+      Matter.Body.setAngularVelocity(b, (Math.random() - 0.5) * SP.scatterSpin * spinAmt);
     }
   };
   window.addEventListener('devicemotion', _sandboxShakeHandler);
