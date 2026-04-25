@@ -16525,58 +16525,58 @@ var _shuffleGatherActive = false;
 var _shuffleGatherStartTime = 0; // timestamp when gather was activated
 var _shuffleGatherRampMs = 2000; // ms to ramp from 0 to full gather force
 
-// Physics settings — all tunable from the shuffle settings panel
+// Physics settings — calibrated from Jason's phone testing (Apr 2026)
 var SHUFFLE_PHYSICS = {
   // ── Area ──
-  centerXN: 0.495,         // normalized X center (0-1, matches lead indicator)
-  centerYN: 0.600,         // normalized Y center (0-1, matches lead indicator)
-  areaRadius: 0.28,        // circle radius as fraction of table height
-  showArea: true,          // show the circular boundary ring
-  areaOpacity: 0.25,       // boundary ring opacity
-  areaColor: '#ffffff',    // boundary ring color
+  centerXN: 0.495,
+  centerYN: 0.49,
+  areaRadius: 0.37,
+  showArea: true,
+  areaOpacity: 0.25,
+  areaColor: '#ffffff',
 
   // ── Tiles ──
-  tileScale: 0.42,         // sprite scale during shuffle
-  tileCount: 0,            // 0 = auto (all tiles), or override
+  tileScale: 0.42,
+  tileCount: 0,
 
   // ── Grab / Push ──
-  grabRadius: 100,          // influence radius in px
-  grabStrength: 0.035,      // how hard tiles get pushed
-  grabFalloff: 2,           // falloff exponent (1=flat, 6=steep)
-  pushOnHover: true,        // true=hover pushes, false=must click/drag
+  grabRadius: 100,
+  grabStrength: 0.035,
+  grabFalloff: 2,
+  pushOnHover: true,
 
   // ── Physics ──
-  timeScale: 1.0,            // physics speed multiplier (0.1=slow-mo, 1=normal, 2=fast)
-  frictionAir: 0.12,        // air resistance (felt drag)
-  friction: 0.01,           // tile-tile friction
-  restitution: 0.6,         // bounciness off walls/tiles
-  density: 0.005,           // tile mass density
-  posIter: 10,              // position solver iterations
-  velIter: 10,              // velocity solver iterations
+  timeScale: 1.0,
+  frictionAir: 0.12,
+  friction: 0.01,
+  restitution: 0.6,
+  density: 0.005,
+  posIter: 17,
+  velIter: 10,
 
   // ── Boundary (gradient force, no hard wall) ──
-  boundaryForceStart: 0.7,  // fraction of radius where force starts (0-1)
-  boundaryForcePeak: 0.08,  // max force at/beyond the circle edge
-  boundaryExponent: 3,      // how steeply force ramps up (1=linear, 4=sharp snap)
-  boundaryDamping: 0.85,    // velocity damping when outside the circle
+  boundaryForceStart: 0.7,
+  boundaryForcePeak: 0.08,
+  boundaryExponent: 3,
+  boundaryDamping: 0.85,
 
   // ── Gather ──
-  gatherForce: 0.04,        // force pulling tiles to center
-  gatherRadius: 80,         // target radius for gathered pile
-  gatherDamping: 0.92,      // extra damping during gather
-  autoGatherDelay: 500,     // ms of idle before auto-gather (mouse/touch release)
+  gatherForce: 0.005,
+  gatherRadius: 125,
+  gatherDamping: 0.92,
+  autoGatherDelay: 500,
 
   // ── Scatter ──
-  scatterForce: 0.08,       // force for initial scatter
-  scatterSpin: 0.15,        // angular velocity on scatter
+  scatterForce: 0.08,
+  scatterSpin: 0.15,
 
   // ── Deal animation ──
-  dealSpeed: 350,            // ms per tile fly-to-hand
-  dealStagger: 30,           // ms between tiles in deal animation
+  dealSpeed: 350,
+  dealStagger: 30,
 
   // ── Visual ──
-  showShadows: false,        // show shadows during shuffle (perf hit)
-  shadowOpacity: 0.5,        // shadow opacity if shown
+  showShadows: false,
+  shadowOpacity: 0.5,
 };
 // Store defaults for Reset button
 var _shufflePhysicsDefaults = JSON.parse(JSON.stringify(SHUFFLE_PHYSICS));
@@ -16604,18 +16604,28 @@ async function performShuffleAnimation() {
     _startShufflePhysics();
 
     // V13.1: If it's AI's turn to shuffle, auto-mix then auto-end
-    // TEMP: disabled — player always shuffles for recording
-    // var shufflerSeat = session.dealer;
-    // var localSeat = typeof getLocalSeat === 'function' ? getLocalSeat() : 0;
-    // if (shufflerSeat !== localSeat) {
-    //   _autoMixAI();
-    // }
+    var shufflerSeat = session.dealer;
+    var localSeat = typeof getLocalSeat === 'function' ? getLocalSeat() : 0;
+    if (shufflerSeat !== localSeat) {
+      _autoMixAI();
+    }
   });
 }
 
-// V13.1: AI shuffle algorithm — based on analysis of recorded human shuffle patterns
-// Pattern: sweep outer arcs (74% CW, 26% CCW), cut through center ~20 times,
-// spend most time at r=0.4-0.7, with speed bursts up to 0.85 on scoops
+// V13.1: AI shuffle — plays back recorded human shuffle motions with variations
+var _shuffleRecordings = []; // loaded from shuffle_recordings.json
+(function() {
+  fetch('shuffle_recordings.json').then(function(r) {
+    if (r.ok) return r.json();
+  }).then(function(data) {
+    if (Array.isArray(data) && data.length > 0) {
+      _shuffleRecordings = data;
+      console.log('[Shuffle] Loaded ' + data.length + ' recordings');
+    }
+  }).catch(function() {
+    console.log('[Shuffle] No recordings file, AI will use procedural fallback');
+  });
+})();
 
 function _autoMixAI() {
   if (!_shufflePhysicsActive) return;
@@ -16623,116 +16633,90 @@ function _autoMixAI() {
   var cx = ac.x, cy = ac.y, r = ac.r;
   var ptr = _shufflePhysicsPointer;
 
-  // Generate a shuffle plan: sequence of moves
-  // Based on human analysis: ~20 center passes, ~40 outer sweeps over ~15-20s
-  // 74% clockwise, mostly at r=0.4-0.7, speed bursts on scoops
+  // Pick a random recording (or fall back to procedural)
+  if (_shuffleRecordings.length > 0) {
+    var rec = _shuffleRecordings[Math.floor(Math.random() * _shuffleRecordings.length)];
+    _playRecording(rec, cx, cy, r, ptr);
+  } else {
+    _proceduralMix(cx, cy, r, ptr);
+  }
+}
 
-  var totalDuration = 14000 + Math.random() * 6000; // 14-20 seconds
-  var centerPasses = 16 + Math.floor(Math.random() * 10); // 16-25
-  var elapsed = 0;
-  var interval = 16;
+function _playRecording(rec, cx, cy, r, ptr) {
+  var points = rec.points;
+  var idx = 0;
+  var startTime = performance.now();
 
-  // Current state
+  // Random variations so no two playbacks are identical
+  var speedMult = 0.85 + Math.random() * 0.3;       // 0.85x-1.15x
+  var mirrorX = Math.random() > 0.5 ? -1 : 1;
+  var mirrorY = Math.random() > 0.5 ? -1 : 1;
+  var rotAngle = Math.random() * Math.PI * 2;
+  var cosR = Math.cos(rotAngle), sinR = Math.sin(rotAngle);
+  var jitter = 0.01 + Math.random() * 0.02;
+  var strengthMult = 0.85 + Math.random() * 0.3;
+
+  var playTimer = setInterval(function() {
+    if (!_shufflePhysicsActive) { clearInterval(playTimer); return; }
+    var now = (performance.now() - startTime) * speedMult;
+
+    while (idx < points.length - 1 && points[idx + 1].t <= now) idx++;
+
+    if (idx >= points.length - 1) {
+      clearInterval(playTimer);
+      ptr.active = false;
+      setTimeout(function() {
+        if (_shufflePhysicsActive) _endShufflePhysics();
+      }, 400);
+      return;
+    }
+
+    var p0 = points[idx];
+    var p1 = points[Math.min(idx + 1, points.length - 1)];
+    var dt = p1.t - p0.t;
+    var frac = dt > 0 ? Math.min(1, (now - p0.t) / dt) : 1;
+
+    var bx = (p0.x + (p1.x - p0.x) * frac) * mirrorX;
+    var by = (p0.y + (p1.y - p0.y) * frac) * mirrorY;
+    var bvx = (p0.vx + (p1.vx - p0.vx) * frac) * mirrorX;
+    var bvy = (p0.vy + (p1.vy - p0.vy) * frac) * mirrorY;
+
+    var rx = bx * cosR - by * sinR;
+    var ry = bx * sinR + by * cosR;
+    var rvx = bvx * cosR - bvy * sinR;
+    var rvy = bvx * sinR + bvy * cosR;
+
+    rx += (Math.random() - 0.5) * jitter;
+    ry += (Math.random() - 0.5) * jitter;
+
+    ptr.x = cx + rx * r;
+    ptr.y = cy + ry * r;
+    ptr.vx = rvx * r * strengthMult;
+    ptr.vy = rvy * r * strengthMult;
+    ptr.active = true;
+  }, 16);
+}
+
+function _proceduralMix(cx, cy, r, ptr) {
+  // Fallback: simple spiral pattern
+  var elapsed = 0, duration = 15000, interval = 16;
   var angle = Math.random() * Math.PI * 2;
-  var curR = 0.5 + Math.random() * 0.2; // start mid-zone
-  var prevX = cx + Math.cos(angle) * curR * r;
-  var prevY = cy + Math.sin(angle) * curR * r;
-
-  // Movement state machine
-  var movePhase = 'sweep'; // 'sweep' (outer arc) or 'cut' (center pass)
-  var phaseTime = 0;
-  var phaseDuration = 0;
-  var sweepDir = 1; // 1=CW, -1=CCW
-  var targetR = 0;
-  var sweepSpeed = 0;
-  var cutsPending = centerPasses;
-
-  function pickSweep() {
-    movePhase = 'sweep';
-    phaseTime = 0;
-    // 74% clockwise
-    sweepDir = Math.random() < 0.74 ? 1 : -1;
-    // Sweep duration: 400-1200ms
-    phaseDuration = 400 + Math.random() * 800;
-    // Target radius: mostly 0.4-0.7, sometimes 0.7-0.9
-    targetR = Math.random() < 0.7
-      ? 0.35 + Math.random() * 0.35   // mid zone
-      : 0.6 + Math.random() * 0.3;    // outer zone
-    // Angular speed: 1.5-4.0 rad/s
-    sweepSpeed = (1.5 + Math.random() * 2.5) * sweepDir;
-  }
-
-  function pickCut() {
-    movePhase = 'cut';
-    phaseTime = 0;
-    // Cut through center: 200-500ms
-    phaseDuration = 200 + Math.random() * 300;
-    targetR = 0.05 + Math.random() * 0.12; // pass near center
-    cutsPending--;
-  }
-
-  pickSweep(); // start with a sweep
-
+  var prevX = cx, prevY = cy;
   var mixTimer = setInterval(function() {
     if (!_shufflePhysicsActive) { clearInterval(mixTimer); return; }
     elapsed += interval;
-    phaseTime += interval;
-
-    // Phase transition
-    if (phaseTime >= phaseDuration) {
-      if (movePhase === 'sweep') {
-        // After a sweep, 40% chance to cut through center (if cuts remaining)
-        if (cutsPending > 0 && (Math.random() < 0.4 || cutsPending > elapsed / totalDuration * centerPasses * 1.5)) {
-          pickCut();
-        } else {
-          pickSweep();
-        }
-      } else {
-        // After a center cut, always sweep
-        pickSweep();
-      }
-    }
-
-    // Smoothly adjust radius toward target
-    var radiusLerp = movePhase === 'cut' ? 0.08 : 0.04;
-    curR += (targetR - curR) * radiusLerp;
-
-    // Update angle
-    if (movePhase === 'sweep') {
-      angle += sweepSpeed * interval / 1000;
-    } else {
-      // During center cut, move more directly through
-      angle += sweepDir * 3.5 * interval / 1000;
-    }
-
-    // Add organic wobble
-    var wobble = Math.sin(elapsed * 0.003) * 0.03 + Math.sin(elapsed * 0.007) * 0.02;
-    var effR = curR + wobble;
-
-    // Compute position
-    var px = cx + Math.cos(angle) * effR * r;
-    var py = cy + Math.sin(angle) * effR * r;
-
-    // Velocity from position change
-    var vx = (px - prevX);
-    var vy = (py - prevY);
-
-    // Speed burst during scoops (when sweeping at outer radius)
-    var speedBoost = 1.0;
-    if (movePhase === 'sweep' && curR > 0.5) {
-      speedBoost = 1.0 + Math.random() * 0.5;
-    }
-
-    ptr.x = px;
-    ptr.y = py;
-    ptr.vx = vx * 1.8 * speedBoost;
-    ptr.vy = vy * 1.8 * speedBoost;
+    var t = elapsed / duration;
+    var loopSpeed = 3 + t * 2;
+    var spiralR = r * 0.35 * (0.4 + 0.6 * Math.sin(t * 4));
+    angle += loopSpeed * interval / 1000;
+    var px = cx + Math.cos(angle) * spiralR;
+    var py = cy + Math.sin(angle) * spiralR;
+    ptr.x = px; ptr.y = py;
+    ptr.vx = (px - prevX) * 1.5;
+    ptr.vy = (py - prevY) * 1.5;
     ptr.active = true;
-    prevX = px;
-    prevY = py;
-
-    // Done?
-    if (elapsed >= totalDuration) {
+    prevX = px; prevY = py;
+    if (elapsed >= duration) {
       clearInterval(mixTimer);
       ptr.active = false;
       setTimeout(function() {
@@ -17135,7 +17119,7 @@ function _createShuffleUI(rect) {
   // V13.1: Show who is shuffling
   var shufflerSeat = session.dealer;
   var localSeat = typeof getLocalSeat === 'function' ? getLocalSeat() : 0;
-  var isPlayerShuffling = true; // TEMP: always let player shuffle for recording
+  var isPlayerShuffling = (shufflerSeat === localSeat);
   if (isPlayerShuffling) {
     hint.textContent = 'Your turn to shuffle — move over tiles to mix them';
   } else {
@@ -17180,6 +17164,24 @@ function _createShuffleUI(rect) {
       }
     });
     btnBar.appendChild(scatterBtn);
+
+    // Replay button — plays back a random recorded AI shuffle
+    var replayBtn = document.createElement('button');
+    replayBtn.textContent = 'Replay';
+    replayBtn.style.cssText = btnStyle + 'background:rgba(14,165,233,0.9);';
+    replayBtn.addEventListener('click', function() {
+      if (_shuffleRecordings.length === 0) {
+        replayBtn.textContent = 'No recordings';
+        setTimeout(function() { replayBtn.textContent = 'Replay'; }, 1500);
+        return;
+      }
+      var ac = _shuffleAreaCenter;
+      var rec = _shuffleRecordings[Math.floor(Math.random() * _shuffleRecordings.length)];
+      _playRecording(rec, ac.x, ac.y, ac.r, _shufflePhysicsPointer);
+      replayBtn.textContent = 'Playing...';
+      setTimeout(function() { replayBtn.textContent = 'Replay'; }, 3000);
+    });
+    btnBar.appendChild(replayBtn);
 
     // Record button
     var recordBtn = document.createElement('button');
