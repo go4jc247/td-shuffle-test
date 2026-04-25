@@ -17820,9 +17820,11 @@ var _shuffleSandboxActive = false;
 var _sandboxMode = 'shuffle'; // 'shuffle' or 'pick'
 var _sandboxGrabbedTiles = {}; // touch identifier -> { body, constraint }
 var _sandboxMouseGrab = null; // { body, constraint } for mouse pick mode
-var _sandboxSlots = []; // array of { el, body, sprite, locked }  — 7 pick slots
+var _sandboxSlots = []; // array of { el, body, sprite, locked }  — pick slots
 var _sandboxSlotEls = null; // the slot container element
 var _sandboxHandSize = 7; // number of pick slots
+var _sandboxMinSlots = 1;
+var _sandboxMaxSlots = 14;
 
 // Find the closest physics body to a point, within maxDist pixels
 function _sandboxFindBodyAt(x, y, maxDist) {
@@ -17979,13 +17981,15 @@ function _startShuffleSandbox() {
         _sandboxMode = 'pick';
         modeBtn.textContent = 'Pick';
         modeBtn.style.background = 'rgba(234,179,8,0.9)';
-        _showPickSlots();
       } else {
         _sandboxMode = 'shuffle';
         modeBtn.textContent = 'Shuffle';
         modeBtn.style.background = 'rgba(59,130,246,0.9)';
-        _hidePickSlots();
       }
+      var hint = document.getElementById('shuffleHint');
+      if (hint) hint.textContent = _sandboxMode === 'shuffle'
+        ? 'Shuffle — swipe over tiles to push them'
+        : 'Pick — drag tiles into slots below';
     });
     btnBar.appendChild(modeBtn);
 
@@ -18006,8 +18010,9 @@ function _startShuffleSandbox() {
     hint.textContent = 'Shuffle — swipe over tiles to push them';
   }
 
-  // ── Create pick slots at bottom (hidden initially) ──
+  // ── Create pick slots at bottom (always visible) ──
   _createPickSlots();
+  _showPickSlots();
 
   // Patch touch handlers
   _patchSandboxTouchHandlers();
@@ -18019,48 +18024,110 @@ function _createPickSlots() {
   var tableEl = document.getElementById('tableMain');
   var container = document.createElement('div');
   container.id = 'sandboxPickSlots';
-  container.style.cssText = 'position:absolute;bottom:8px;left:50%;transform:translateX(-50%);z-index:510;display:none;flex-direction:row;gap:6px;align-items:flex-end;padding:8px 12px;background:rgba(0,0,0,0.45);backdrop-filter:blur(6px);border-radius:12px;';
+  container.style.cssText = 'position:absolute;bottom:8px;left:50%;transform:translateX(-50%);z-index:510;display:none;flex-direction:row;gap:6px;align-items:center;padding:8px 12px;background:rgba(0,0,0,0.45);backdrop-filter:blur(6px);border-radius:12px;';
   _sandboxSlotEls = container;
   _sandboxSlots = [];
 
+  // Minus button
+  var minusBtn = document.createElement('button');
+  minusBtn.id = 'sandboxSlotMinus';
+  minusBtn.textContent = '-';
+  minusBtn.style.cssText = 'width:28px;height:28px;border:none;border-radius:50%;background:rgba(239,68,68,0.8);color:#fff;font-size:16px;font-weight:700;cursor:pointer;flex-shrink:0;line-height:1;padding:0;';
+  minusBtn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    if (_sandboxHandSize <= _sandboxMinSlots) return;
+    // Remove last empty slot (or last slot if all occupied)
+    var removeIdx = -1;
+    for (var i = _sandboxSlots.length - 1; i >= 0; i--) {
+      if (!_sandboxSlots[i].body) { removeIdx = i; break; }
+    }
+    if (removeIdx === -1) removeIdx = _sandboxSlots.length - 1;
+    // Eject tile if occupied
+    if (_sandboxSlots[removeIdx].body) _ejectFromSlot(removeIdx);
+    _sandboxSlots[removeIdx].el.remove();
+    _sandboxSlots.splice(removeIdx, 1);
+    _sandboxHandSize--;
+    _updateSlotCountLabel();
+  });
+  container.appendChild(minusBtn);
+
+  // Slot wrapper (holds just the slot divs)
+  var slotWrap = document.createElement('div');
+  slotWrap.id = 'sandboxSlotWrap';
+  slotWrap.style.cssText = 'display:flex;gap:6px;align-items:center;overflow-x:auto;-webkit-overflow-scrolling:touch;';
+  container.appendChild(slotWrap);
+
   for (var i = 0; i < _sandboxHandSize; i++) {
-    var slot = document.createElement('div');
-    slot.dataset.slotIndex = i;
-    slot.style.cssText = 'width:52px;height:80px;border:2px dashed rgba(255,255,255,0.4);border-radius:8px;background:rgba(255,255,255,0.05);display:flex;align-items:center;justify-content:center;position:relative;transition:border-color 0.2s,background 0.2s;';
-    slot.innerHTML = '<span style="color:rgba(255,255,255,0.25);font-size:11px;font-weight:700;pointer-events:none;">' + (i + 1) + '</span>';
-
-    // Tap to flip face-up and lock
-    (function(slotIdx, slotEl) {
-      slotEl.addEventListener('click', function(e) {
-        e.stopPropagation();
-        var sd = _sandboxSlots[slotIdx];
-        if (!sd || !sd.body || sd.locked) return;
-        // Flip face-up and lock
-        sd.locked = true;
-        sd.sprite.setFaceUp(true);
-        slotEl.style.borderColor = 'rgba(34,197,94,0.8)';
-        slotEl.style.background = 'rgba(34,197,94,0.15)';
-        slotEl.style.pointerEvents = 'none'; // prevent further clicks
-      });
-    })(i, slot);
-
-    container.appendChild(slot);
-    _sandboxSlots.push({ el: slot, body: null, sprite: null, locked: false });
+    _addOneSlot(slotWrap, i);
   }
+
+  // Plus button
+  var plusBtn = document.createElement('button');
+  plusBtn.id = 'sandboxSlotPlus';
+  plusBtn.textContent = '+';
+  plusBtn.style.cssText = 'width:28px;height:28px;border:none;border-radius:50%;background:rgba(34,197,94,0.8);color:#fff;font-size:16px;font-weight:700;cursor:pointer;flex-shrink:0;line-height:1;padding:0;';
+  plusBtn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    if (_sandboxHandSize >= _sandboxMaxSlots) return;
+    _addOneSlot(slotWrap, _sandboxHandSize);
+    _sandboxHandSize++;
+    _updateSlotCountLabel();
+  });
+  container.appendChild(plusBtn);
+
+  // Count label
+  var countLabel = document.createElement('span');
+  countLabel.id = 'sandboxSlotCount';
+  countLabel.style.cssText = 'color:rgba(255,255,255,0.5);font-size:11px;font-weight:600;font-family:system-ui,sans-serif;flex-shrink:0;min-width:20px;text-align:center;';
+  countLabel.textContent = _sandboxHandSize;
+  container.appendChild(countLabel);
 
   tableEl.appendChild(container);
 }
 
+function _addOneSlot(slotWrap, idx) {
+  var slot = document.createElement('div');
+  slot.dataset.slotIndex = idx;
+  slot.style.cssText = 'width:52px;height:80px;border:2px dashed rgba(255,255,255,0.4);border-radius:8px;background:rgba(255,255,255,0.05);display:flex;align-items:center;justify-content:center;position:relative;transition:border-color 0.2s,background 0.2s;flex-shrink:0;';
+  slot.innerHTML = '<span style="color:rgba(255,255,255,0.25);font-size:11px;font-weight:700;pointer-events:none;">' + (idx + 1) + '</span>';
+
+  // Tap to flip face-up and lock
+  (function(slotEl) {
+    slotEl.addEventListener('click', function(e) {
+      e.stopPropagation();
+      var si = _sandboxSlots.indexOf(_slotDataForEl(slotEl));
+      if (si < 0) return;
+      var sd = _sandboxSlots[si];
+      if (!sd || !sd.body || sd.locked) return;
+      sd.locked = true;
+      sd.sprite.setFaceUp(true);
+      slotEl.style.borderColor = 'rgba(34,197,94,0.8)';
+      slotEl.style.background = 'rgba(34,197,94,0.15)';
+    });
+  })(slot);
+
+  slotWrap.appendChild(slot);
+  _sandboxSlots.push({ el: slot, body: null, sprite: null, locked: false });
+}
+
+function _slotDataForEl(el) {
+  for (var i = 0; i < _sandboxSlots.length; i++) {
+    if (_sandboxSlots[i].el === el) return _sandboxSlots[i];
+  }
+  return null;
+}
+
+function _updateSlotCountLabel() {
+  var label = document.getElementById('sandboxSlotCount');
+  if (label) label.textContent = _sandboxHandSize;
+}
+
 function _showPickSlots() {
   if (_sandboxSlotEls) _sandboxSlotEls.style.display = 'flex';
-  var hint = document.getElementById('shuffleHint');
-  if (hint) hint.textContent = 'Pick — drag tiles into slots below';
 }
 
 function _hidePickSlots() {
   if (_sandboxSlotEls) _sandboxSlotEls.style.display = 'none';
-  var hint = document.getElementById('shuffleHint');
-  if (hint) hint.textContent = 'Shuffle — swipe over tiles to push them';
 }
 
 // Find the first empty slot, or return -1
@@ -18152,7 +18219,6 @@ function _ejectFromSlot(slotIdx) {
 // Check if a body is near a pick slot and snap it in, or eject if already slotted
 // Returns true if the body was snapped or was already in a slot
 function _trySnapOrEject(body) {
-  if (_sandboxMode !== 'pick') return false;
   if (!_sandboxSlotEls || _sandboxSlotEls.style.display === 'none') return false;
 
   // If the body is already in a slot, check if it was dragged away
@@ -18401,6 +18467,71 @@ function _patchSandboxTouchHandlers() {
 
   // Add touch ring visualization
   _sandboxAddTouchRings(newOverlay);
+
+  // Shake detection — violent scatter on iPhone shake
+  _sandboxStartShakeDetection();
+}
+
+// ── Shake Detection ──
+var _sandboxShakeHandler = null;
+var _sandboxShakeLastTime = 0;
+var _sandboxShakeCooldown = 300; // ms between shake bursts
+
+function _sandboxStartShakeDetection() {
+  // Request permission on iOS 13+
+  if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+    // We'll request on first user interaction (button tap etc.)
+    var requestOnce = function() {
+      DeviceMotionEvent.requestPermission().then(function(state) {
+        if (state === 'granted') _sandboxBindShake();
+      }).catch(function() {});
+      document.removeEventListener('touchend', requestOnce);
+    };
+    document.addEventListener('touchend', requestOnce, { once: true });
+  } else if (typeof DeviceMotionEvent !== 'undefined') {
+    _sandboxBindShake();
+  }
+}
+
+function _sandboxBindShake() {
+  var shakeThreshold = 25; // m/s^2 — needs a solid shake
+  _sandboxShakeHandler = function(e) {
+    if (!_shuffleSandboxActive || !_shufflePhysicsActive) return;
+    var acc = e.accelerationIncludingGravity;
+    if (!acc) return;
+    var mag = Math.sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
+    // Subtract gravity (~9.8) to get actual shake force
+    var shakeMag = Math.abs(mag - 9.8);
+    if (shakeMag < shakeThreshold) return;
+
+    var now = performance.now();
+    if (now - _sandboxShakeLastTime < _sandboxShakeCooldown) return;
+    _sandboxShakeLastTime = now;
+
+    // Violent scatter — scale force by shake intensity
+    var forceMult = Math.min(shakeMag / shakeThreshold, 3.0);
+    var SP = SHUFFLE_PHYSICS;
+    for (var i = 0; i < _shufflePhysicsBodies.length; i++) {
+      var b = _shufflePhysicsBodies[i];
+      if (b.isStatic) continue; // skip tiles locked in slots
+      // Use the actual accelerometer direction for realistic feel
+      var vx = (acc.x || 0) * SP.scatterForce * 60 * forceMult;
+      var vy = -(acc.y || 0) * SP.scatterForce * 60 * forceMult; // flip Y for screen coords
+      // Add some randomness
+      vx += (Math.random() - 0.5) * SP.scatterForce * 80 * forceMult;
+      vy += (Math.random() - 0.5) * SP.scatterForce * 80 * forceMult;
+      Matter.Body.setVelocity(b, { x: vx, y: vy });
+      Matter.Body.setAngularVelocity(b, (Math.random() - 0.5) * SP.scatterSpin * 3 * forceMult);
+    }
+  };
+  window.addEventListener('devicemotion', _sandboxShakeHandler);
+}
+
+function _sandboxStopShakeDetection() {
+  if (_sandboxShakeHandler) {
+    window.removeEventListener('devicemotion', _sandboxShakeHandler);
+    _sandboxShakeHandler = null;
+  }
 }
 
 function _sandboxAddTouchRings(overlay) {
@@ -18466,12 +18597,16 @@ function _exitShuffleSandbox() {
   _sandboxMouseGrab = null;
   _sandboxMode = 'shuffle';
 
+  // Stop shake detection
+  _sandboxStopShakeDetection();
+
   // Remove pick slots
   if (_sandboxSlotEls) {
     _sandboxSlotEls.remove();
     _sandboxSlotEls = null;
   }
   _sandboxSlots = [];
+  _sandboxHandSize = 7; // reset to default
 
   // End shuffle physics (cleans up overlay, buttons, settings, physics engine)
   if (_shufflePhysicsActive) {
