@@ -17820,6 +17820,9 @@ var _shuffleSandboxActive = false;
 var _sandboxMode = 'shuffle'; // 'shuffle' or 'pick'
 var _sandboxGrabbedTiles = {}; // touch identifier -> { body, constraint }
 var _sandboxMouseGrab = null; // { body, constraint } for mouse pick mode
+var _sandboxSlots = []; // array of { el, body, sprite, locked }  — 7 pick slots
+var _sandboxSlotEls = null; // the slot container element
+var _sandboxHandSize = 7; // number of pick slots
 
 // Find the closest physics body to a point, within maxDist pixels
 function _sandboxFindBodyAt(x, y, maxDist) {
@@ -17922,9 +17925,8 @@ function _enterShuffleSandbox() {
 
 function _startShuffleSandbox() {
   // Reuse _startShufflePhysics but with sandbox overrides
-  // We'll call it directly — it reads from sprites[] which we populated
-  _shufflePhysicsActive = false; // ensure clean state
-  _shufflePhysicsResolve = null; // no promise to resolve
+  _shufflePhysicsActive = false;
+  _shufflePhysicsResolve = null;
 
   // Temporarily stub session.dealer and getLocalSeat so _createShuffleUI works
   var hadSession = (typeof session !== 'undefined' && session);
@@ -17942,60 +17944,260 @@ function _startShuffleSandbox() {
   if (hadSession && origDealer !== undefined) session.dealer = origDealer;
   if (origGetLocalSeat) window.getLocalSeat = origGetLocalSeat;
 
-  // Now override the UI: remove "Done - Deal" button, add "Back to Menu" + disable auto-gather
   _shuffleGatherActive = false;
 
-  // Remove Done button, add Back button
+  // ── Replace the default button bar with a scrollable top bar ──
   var btnBar = document.getElementById('shuffleBtnBar');
   if (btnBar) {
+    // Restyle: move to top, horizontal scroll
+    btnBar.style.cssText = 'position:absolute;top:0;left:0;right:0;z-index:510;display:flex;gap:8px;align-items:center;padding:6px 10px;overflow-x:auto;overflow-y:hidden;white-space:nowrap;-webkit-overflow-scrolling:touch;background:rgba(0,0,0,0.5);backdrop-filter:blur(6px);';
+
     // Remove "Done - Deal" button
     var btns = btnBar.querySelectorAll('button');
     for (var i = 0; i < btns.length; i++) {
-      if (btns[i].textContent === 'Done - Deal') {
-        btns[i].remove();
-      }
+      if (btns[i].textContent === 'Done - Deal') btns[i].remove();
     }
+
+    // Compact button style for all existing + new buttons
+    var cBtnStyle = 'color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:700;font-family:system-ui,sans-serif;cursor:pointer;white-space:nowrap;flex-shrink:0;';
+
+    // Restyle existing buttons to be compact
+    var remainingBtns = btnBar.querySelectorAll('button');
+    for (var i = 0; i < remainingBtns.length; i++) {
+      var b = remainingBtns[i];
+      var bg = b.style.background || 'rgba(100,100,100,0.9)';
+      b.style.cssText = cBtnStyle + 'background:' + bg + ';';
+    }
+
     // Add mode toggle button
     var modeBtn = document.createElement('button');
     modeBtn.id = 'sandboxModeBtn';
-    modeBtn.textContent = 'Mode: Shuffle';
-    modeBtn.style.cssText = 'color:#fff;border:none;padding:8px 18px;border-radius:8px;font-size:13px;font-weight:700;font-family:system-ui,sans-serif;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,0.4);background:rgba(59,130,246,0.9);';
+    modeBtn.textContent = 'Shuffle';
+    modeBtn.style.cssText = cBtnStyle + 'background:rgba(59,130,246,0.9);';
     modeBtn.addEventListener('click', function() {
       if (_sandboxMode === 'shuffle') {
         _sandboxMode = 'pick';
-        modeBtn.textContent = 'Mode: Pick';
+        modeBtn.textContent = 'Pick';
         modeBtn.style.background = 'rgba(234,179,8,0.9)';
+        _showPickSlots();
       } else {
         _sandboxMode = 'shuffle';
-        modeBtn.textContent = 'Mode: Shuffle';
+        modeBtn.textContent = 'Shuffle';
         modeBtn.style.background = 'rgba(59,130,246,0.9)';
+        _hidePickSlots();
       }
-      // Update hint
-      var hint = document.getElementById('shuffleHint');
-      if (hint) hint.textContent = _sandboxMode === 'shuffle'
-        ? 'Shuffle ��� swipe over tiles to push them'
-        : 'Pick — tap a tile to grab it, drag to move';
     });
     btnBar.appendChild(modeBtn);
 
     // Add Back to Menu button
     var backBtn = document.createElement('button');
-    backBtn.textContent = 'Back to Menu';
-    backBtn.style.cssText = 'color:#fff;border:none;padding:8px 18px;border-radius:8px;font-size:13px;font-weight:700;font-family:system-ui,sans-serif;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,0.4);background:rgba(239,68,68,0.9);';
+    backBtn.textContent = 'Back';
+    backBtn.style.cssText = cBtnStyle + 'background:rgba(239,68,68,0.9);';
     backBtn.addEventListener('click', function() {
       _exitShuffleSandbox();
     });
     btnBar.appendChild(backBtn);
   }
 
-  // Override hint text
+  // Override hint — move it below the top bar
   var hint = document.getElementById('shuffleHint');
   if (hint) {
+    hint.style.top = '42px';
     hint.textContent = 'Shuffle — swipe over tiles to push them';
   }
 
-  // Patch touch handlers to use finger-size detection
+  // ── Create pick slots at bottom (hidden initially) ──
+  _createPickSlots();
+
+  // Patch touch handlers
   _patchSandboxTouchHandlers();
+}
+
+// ── Pick Slots ──
+
+function _createPickSlots() {
+  var tableEl = document.getElementById('tableMain');
+  var container = document.createElement('div');
+  container.id = 'sandboxPickSlots';
+  container.style.cssText = 'position:absolute;bottom:8px;left:50%;transform:translateX(-50%);z-index:510;display:none;flex-direction:row;gap:6px;align-items:flex-end;padding:8px 12px;background:rgba(0,0,0,0.45);backdrop-filter:blur(6px);border-radius:12px;';
+  _sandboxSlotEls = container;
+  _sandboxSlots = [];
+
+  for (var i = 0; i < _sandboxHandSize; i++) {
+    var slot = document.createElement('div');
+    slot.dataset.slotIndex = i;
+    slot.style.cssText = 'width:52px;height:80px;border:2px dashed rgba(255,255,255,0.4);border-radius:8px;background:rgba(255,255,255,0.05);display:flex;align-items:center;justify-content:center;position:relative;transition:border-color 0.2s,background 0.2s;';
+    slot.innerHTML = '<span style="color:rgba(255,255,255,0.25);font-size:11px;font-weight:700;pointer-events:none;">' + (i + 1) + '</span>';
+
+    // Tap to flip face-up and lock
+    (function(slotIdx, slotEl) {
+      slotEl.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var sd = _sandboxSlots[slotIdx];
+        if (!sd || !sd.body || sd.locked) return;
+        // Flip face-up and lock
+        sd.locked = true;
+        sd.sprite.setFaceUp(true);
+        slotEl.style.borderColor = 'rgba(34,197,94,0.8)';
+        slotEl.style.background = 'rgba(34,197,94,0.15)';
+        slotEl.style.pointerEvents = 'none'; // prevent further clicks
+      });
+    })(i, slot);
+
+    container.appendChild(slot);
+    _sandboxSlots.push({ el: slot, body: null, sprite: null, locked: false });
+  }
+
+  tableEl.appendChild(container);
+}
+
+function _showPickSlots() {
+  if (_sandboxSlotEls) _sandboxSlotEls.style.display = 'flex';
+  var hint = document.getElementById('shuffleHint');
+  if (hint) hint.textContent = 'Pick — drag tiles into slots below';
+}
+
+function _hidePickSlots() {
+  if (_sandboxSlotEls) _sandboxSlotEls.style.display = 'none';
+  var hint = document.getElementById('shuffleHint');
+  if (hint) hint.textContent = 'Shuffle — swipe over tiles to push them';
+}
+
+// Find the first empty slot, or return -1
+function _findEmptySlot() {
+  for (var i = 0; i < _sandboxSlots.length; i++) {
+    if (!_sandboxSlots[i].body) return i;
+  }
+  return -1;
+}
+
+// Find which slot a body is in, or -1
+function _findSlotForBody(body) {
+  for (var i = 0; i < _sandboxSlots.length; i++) {
+    if (_sandboxSlots[i].body === body) return i;
+  }
+  return -1;
+}
+
+// Get the world-space center of a slot element
+function _getSlotCenter(slotIdx) {
+  var slotEl = _sandboxSlots[slotIdx].el;
+  var tableEl = document.getElementById('tableMain');
+  var tableRect = tableEl.getBoundingClientRect();
+  var slotRect = slotEl.getBoundingClientRect();
+  return {
+    x: slotRect.left + slotRect.width / 2 - tableRect.left,
+    y: slotRect.top + slotRect.height / 2 - tableRect.top
+  };
+}
+
+// Find the sprite element for a physics body
+function _spriteForBody(body) {
+  var idx = _shufflePhysicsBodies.indexOf(body);
+  return idx >= 0 ? _shufflePhysicsRealSprites[idx] : null;
+}
+
+// Snap a body into a slot (called on touch release in pick mode)
+function _snapBodyToSlot(body, slotIdx) {
+  var sd = _sandboxSlots[slotIdx];
+  var center = _getSlotCenter(slotIdx);
+  var sprite = _spriteForBody(body);
+
+  // Make body static so it stays in the slot
+  Matter.Body.setStatic(body, true);
+  Matter.Body.setPosition(body, { x: center.x, y: center.y });
+  Matter.Body.setAngle(body, 0);
+
+  sd.body = body;
+  sd.sprite = sprite;
+  sd.locked = false;
+
+  // Update slot visual
+  sd.el.style.borderColor = 'rgba(234,179,8,0.8)';
+  sd.el.style.background = 'rgba(234,179,8,0.1)';
+  sd.el.querySelector('span').style.display = 'none';
+
+  // Ensure face-down
+  if (sprite) sprite.setFaceUp(false);
+}
+
+// Push a tile back out of a slot onto the table (only if not locked)
+function _ejectFromSlot(slotIdx) {
+  var sd = _sandboxSlots[slotIdx];
+  if (!sd || !sd.body || sd.locked) return false;
+
+  var body = sd.body;
+  var sprite = sd.sprite;
+
+  // Make dynamic again
+  Matter.Body.setStatic(body, false);
+
+  // Give it a little upward push to clear the slot area
+  var center = _getSlotCenter(slotIdx);
+  Matter.Body.setPosition(body, { x: center.x, y: center.y - 100 });
+  Matter.Body.setVelocity(body, { x: (Math.random() - 0.5) * 3, y: -4 });
+
+  // Reset slot
+  sd.body = null;
+  sd.sprite = null;
+  sd.locked = false;
+  sd.el.style.borderColor = 'rgba(255,255,255,0.4)';
+  sd.el.style.background = 'rgba(255,255,255,0.05)';
+  sd.el.style.pointerEvents = '';
+  sd.el.querySelector('span').style.display = '';
+
+  return true;
+}
+
+// Check if a body is near a pick slot and snap it in, or eject if already slotted
+// Returns true if the body was snapped or was already in a slot
+function _trySnapOrEject(body) {
+  if (_sandboxMode !== 'pick') return false;
+  if (!_sandboxSlotEls || _sandboxSlotEls.style.display === 'none') return false;
+
+  // If the body is already in a slot, check if it was dragged away
+  var existingSlot = _findSlotForBody(body);
+  if (existingSlot >= 0) {
+    var sd = _sandboxSlots[existingSlot];
+    if (sd.locked) return true; // locked tiles can't be moved
+    // Check if body was dragged far from its slot
+    var slotCenter = _getSlotCenter(existingSlot);
+    var dx = body.position.x - slotCenter.x;
+    var dy = body.position.y - slotCenter.y;
+    if (dx * dx + dy * dy > 80 * 80) {
+      // Dragged away — eject
+      _ejectFromSlot(existingSlot);
+      return false;
+    }
+    // Still near slot — re-snap
+    _snapBodyToSlot(body, existingSlot);
+    return true;
+  }
+
+  // Check if body is near any empty slot
+  var tableEl = document.getElementById('tableMain');
+  var tableRect = tableEl.getBoundingClientRect();
+  var slotsRect = _sandboxSlotEls.getBoundingClientRect();
+
+  // Only consider snapping if the body is in the lower portion of screen (near slots)
+  var bodyScreenY = body.position.y;
+  var slotsTop = slotsRect.top - tableRect.top - 40; // 40px grace zone above slots
+  if (bodyScreenY < slotsTop) return false;
+
+  // Find nearest empty slot
+  var bestSlot = -1, bestDist = 120; // max snap distance
+  for (var i = 0; i < _sandboxSlots.length; i++) {
+    if (_sandboxSlots[i].body) continue;
+    var center = _getSlotCenter(i);
+    var d = Math.hypot(body.position.x - center.x, body.position.y - center.y);
+    if (d < bestDist) { bestDist = d; bestSlot = i; }
+  }
+
+  if (bestSlot >= 0) {
+    _snapBodyToSlot(body, bestSlot);
+    return true;
+  }
+  return false;
 }
 
 function _patchSandboxTouchHandlers() {
@@ -18017,8 +18219,20 @@ function _patchSandboxTouchHandlers() {
     if (_sandboxMode === 'pick') {
       var body = _sandboxFindBodyAt(mx, my, 60);
       if (body) {
-        _sandboxMouseGrab = { body: body, constraint: _sandboxGrabBody(body, mx, my) };
-        newOverlay.style.cursor = 'grabbing';
+        // If in a slot, eject first (unless locked)
+        var slotIdx = _findSlotForBody(body);
+        if (slotIdx >= 0) {
+          if (_sandboxSlots[slotIdx].locked) { body = null; }
+          else {
+            _ejectFromSlot(slotIdx);
+            Matter.Body.setPosition(body, { x: mx, y: my });
+            Matter.Body.setVelocity(body, { x: 0, y: 0 });
+          }
+        }
+        if (body) {
+          _sandboxMouseGrab = { body: body, constraint: _sandboxGrabBody(body, mx, my) };
+          newOverlay.style.cursor = 'grabbing';
+        }
       }
     } else {
       _shufflePhysicsPointer.x = _shufflePhysicsPointer.px = mx;
@@ -18047,6 +18261,7 @@ function _patchSandboxTouchHandlers() {
   newOverlay.addEventListener('mouseup', function() {
     _mouseDown = false;
     if (_sandboxMouseGrab) {
+      _trySnapOrEject(_sandboxMouseGrab.body);
       _sandboxReleaseGrab(_sandboxMouseGrab);
       _sandboxMouseGrab = null;
     }
@@ -18056,6 +18271,7 @@ function _patchSandboxTouchHandlers() {
   newOverlay.addEventListener('mouseleave', function() {
     _mouseDown = false;
     if (_sandboxMouseGrab) {
+      _trySnapOrEject(_sandboxMouseGrab.body);
       _sandboxReleaseGrab(_sandboxMouseGrab);
       _sandboxMouseGrab = null;
     }
@@ -18077,6 +18293,17 @@ function _patchSandboxTouchHandlers() {
         var grabR = _sandboxGetGrabRadius(t);
         var body = _sandboxFindBodyAt(tx, ty, Math.max(grabR, 60));
         if (body) {
+          // Check if this body is in a slot
+          var slotIdx = _findSlotForBody(body);
+          if (slotIdx >= 0) {
+            var sd = _sandboxSlots[slotIdx];
+            if (sd.locked) continue; // locked tiles can't be moved
+            // Eject from slot so it can be dragged
+            _ejectFromSlot(slotIdx);
+            // Reposition to touch point instead of the ejection position
+            Matter.Body.setPosition(body, { x: tx, y: ty });
+            Matter.Body.setVelocity(body, { x: 0, y: 0 });
+          }
           // Don't grab a body that's already grabbed by another finger
           var alreadyGrabbed = false;
           var gkeys = Object.keys(_sandboxGrabbedTiles);
@@ -18158,9 +18385,11 @@ function _patchSandboxTouchHandlers() {
     e.preventDefault();
     for (var ti = 0; ti < e.changedTouches.length; ti++) {
       var id = e.changedTouches[ti].identifier;
-      // Release pick constraint
+      // Release pick constraint and try to snap to slot
       if (_sandboxGrabbedTiles[id]) {
-        _sandboxReleaseGrab(_sandboxGrabbedTiles[id]);
+        var grab = _sandboxGrabbedTiles[id];
+        _trySnapOrEject(grab.body);
+        _sandboxReleaseGrab(grab);
         delete _sandboxGrabbedTiles[id];
       }
       delete _shuffleTouchPointers[id];
@@ -18236,6 +18465,13 @@ function _exitShuffleSandbox() {
   _sandboxGrabbedTiles = {};
   _sandboxMouseGrab = null;
   _sandboxMode = 'shuffle';
+
+  // Remove pick slots
+  if (_sandboxSlotEls) {
+    _sandboxSlotEls.remove();
+    _sandboxSlotEls = null;
+  }
+  _sandboxSlots = [];
 
   // End shuffle physics (cleans up overlay, buttons, settings, physics engine)
   if (_shufflePhysicsActive) {
