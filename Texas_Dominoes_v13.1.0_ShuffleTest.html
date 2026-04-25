@@ -2731,6 +2731,7 @@
         <button class="glossBtn glossGreen startScreenBtn" id="btnStartNewGame" style="width:100%;padding:14px 32px;font-size:18px;">New Game</button>
         <button class="glossBtn glossBlue startScreenBtn" id="btnStartResumeGame" style="display:none;width:100%;padding:14px 32px;font-size:18px;">Resume Game</button>
         <button class="glossBtn startScreenBtn" id="btnStartMultiplayer" style="background:linear-gradient(to bottom, #a78bfa, #7c3aed);width:100%;padding:14px 32px;font-size:18px;">Multiplayer</button>
+        <button class="glossBtn startScreenBtn" id="btnShuffleSandbox" style="background:linear-gradient(to bottom, #f59e0b, #b45309);width:100%;padding:14px 32px;font-size:18px;">Shuffle Sandbox</button>
         <button class="glossBtn startScreenBtn" id="btnResumeMP" style="display:none; background:linear-gradient(to bottom, #f59e0b, #d97706); color:#fff;width:100%;padding:14px 32px;font-size:18px;">Resume MP Game</button>
       </div>
     </div>
@@ -17015,10 +17016,10 @@ function _shufflePhysicsLoop() {
         var touchKeys = Object.keys(_shuffleTouchPointers);
         for (var tk = 0; tk < touchKeys.length; tk++) {
           var tp = _shuffleTouchPointers[touchKeys[tk]];
-          forcePoints.push({ x: tp.x, y: tp.y, vx: tp.vx, vy: tp.vy });
+          forcePoints.push({ x: tp.x, y: tp.y, vx: tp.vx, vy: tp.vy, grabR: tp.grabR || 0 });
         }
         if (forcePoints.length === 0) {
-          forcePoints.push({ x: ptr.x, y: ptr.y, vx: ptr.vx, vy: ptr.vy });
+          forcePoints.push({ x: ptr.x, y: ptr.y, vx: ptr.vx, vy: ptr.vy, grabR: 0 });
         }
       } else {
         // Mouse: primary + 180° mirror
@@ -17037,6 +17038,9 @@ function _shufflePhysicsLoop() {
         var pt = forcePoints[fp];
         var spd = Math.hypot(pt.vx, pt.vy);
         if (spd < 0.5) continue;
+        // Use per-finger grab radius if available, otherwise global
+        var fpR = (pt.grabR > 0) ? pt.grabR : R;
+        var fpR2 = fpR * fpR;
         var ux = pt.vx / spd;
         var uy = pt.vy / spd;
         for (var i = 0; i < _shufflePhysicsBodies.length; i++) {
@@ -17044,10 +17048,10 @@ function _shufflePhysicsLoop() {
           var dx = b.position.x - pt.x;
           var dy = b.position.y - pt.y;
           var dist2 = dx*dx + dy*dy;
-          if (dist2 >= R2) continue;
+          if (dist2 >= fpR2) continue;
           // Only push tiles we're moving toward
           if (dx * ux + dy * uy > 0) continue;
-          var t = 1 - Math.sqrt(dist2) / R;
+          var t = 1 - Math.sqrt(dist2) / fpR;
           Matter.Body.applyForce(b, b.position, {
             x: pt.vx * Math.pow(t, SP.grabFalloff) * SP.grabStrength,
             y: pt.vy * Math.pow(t, SP.grabFalloff) * SP.grabStrength
@@ -17808,6 +17812,316 @@ function _endShufflePhysics() {
   }
 }
 
+
+// ── SHUFFLE SANDBOX MODE ──
+// Enters a free-play shuffle sandbox from the home screen using the real game sprites.
+// No game flow, no auto-gather — just drag tiles around with full physics + settings.
+var _shuffleSandboxActive = false;
+
+// Finger-size detection for touch (per-finger grab radius)
+var _sandboxTouchRadiusScale = 3.0;
+var _sandboxMinGrabRadius = 40;
+var _sandboxMaxGrabRadius = 200;
+var _sandboxForceRadiusBonus = 60;
+
+function _sandboxGetGrabRadius(touch) {
+  var rx = touch.radiusX || 0;
+  var ry = touch.radiusY || 0;
+  var avgRadius = (rx + ry) / 2;
+  var force = touch.force || 0;
+  var grabR = _sandboxMinGrabRadius;
+  if (avgRadius > 0) {
+    grabR = Math.max(_sandboxMinGrabRadius, Math.min(_sandboxMaxGrabRadius, avgRadius * _sandboxTouchRadiusScale));
+  }
+  grabR += force * _sandboxForceRadiusBonus;
+  return Math.min(grabR, _sandboxMaxGrabRadius);
+}
+
+function _enterShuffleSandbox() {
+  if (_shuffleSandboxActive) return;
+  _shuffleSandboxActive = true;
+
+  // Hide home screen
+  document.getElementById('startScreenBackdrop').style.display = 'none';
+
+  // Show table
+  var tableMain = document.getElementById('tableMain');
+  tableMain.style.display = '';
+
+  // Clear any existing sprites
+  spriteLayer.innerHTML = '';
+  shadowLayer.innerHTML = '';
+  sprites.length = 0;
+
+  // Generate all 28 tiles (double-6 set) and create real sprites
+  var tiles = allDominoesForSet(6);
+  var SP = SHUFFLE_PHYSICS;
+  var rect = getRect();
+  var W = rect.width, H = rect.height;
+  var cx = W * SP.centerXN, cy = H * SP.centerYN;
+  var areaR = H * SP.areaRadius;
+
+  var sandboxSprites = [];
+  sprites[0] = []; // put all in seat 0 so _startShufflePhysics can find them
+
+  for (var i = 0; i < tiles.length; i++) {
+    var tile = tiles[i];
+    var sprite = makeSprite(tile);
+    // Random position inside area
+    var angle = Math.random() * Math.PI * 2;
+    var dist = Math.random() * areaR * 0.7;
+    var px = cx + Math.cos(angle) * dist - 28;
+    var py = cy + Math.sin(angle) * dist - 56;
+    sprite.setPose({ x: px, y: py, s: SP.tileScale, rz: Math.random() * 360, ry: 0 });
+    sprite.setFaceUp(false);
+    if (sprite._shadow) shadowLayer.appendChild(sprite._shadow);
+    spriteLayer.appendChild(sprite);
+    sprites[0][i] = { sprite: sprite, tile: tile, originalSlot: i };
+    sandboxSprites.push(sprite);
+  }
+
+  // Now start shuffle physics (which reads from sprites array)
+  // But we need to override the behavior: no auto-end, no game session references
+  _startShuffleSandbox();
+}
+
+function _startShuffleSandbox() {
+  // Reuse _startShufflePhysics but with sandbox overrides
+  // We'll call it directly — it reads from sprites[] which we populated
+  _shufflePhysicsActive = false; // ensure clean state
+  _shufflePhysicsResolve = null; // no promise to resolve
+
+  // Temporarily stub session.dealer and getLocalSeat so _createShuffleUI works
+  var hadSession = (typeof session !== 'undefined' && session);
+  var origDealer = hadSession ? session.dealer : undefined;
+  if (hadSession) session.dealer = 0;
+  var origGetLocalSeat = (typeof getLocalSeat === 'function') ? getLocalSeat : null;
+  window.getLocalSeat = function() { return 0; };
+  var origSeatToPlayer = (typeof seatToPlayer === 'function') ? seatToPlayer : null;
+  window.seatToPlayer = window.seatToPlayer || function(s) { return s + 1; };
+
+  // Start physics
+  _startShufflePhysics();
+
+  // Restore
+  if (hadSession && origDealer !== undefined) session.dealer = origDealer;
+  if (origGetLocalSeat) window.getLocalSeat = origGetLocalSeat;
+
+  // Now override the UI: remove "Done - Deal" button, add "Back to Menu" + disable auto-gather
+  _shuffleGatherActive = false;
+
+  // Remove Done button, add Back button
+  var btnBar = document.getElementById('shuffleBtnBar');
+  if (btnBar) {
+    // Remove "Done - Deal" button
+    var btns = btnBar.querySelectorAll('button');
+    for (var i = 0; i < btns.length; i++) {
+      if (btns[i].textContent === 'Done - Deal') {
+        btns[i].remove();
+      }
+    }
+    // Add Back to Menu button
+    var backBtn = document.createElement('button');
+    backBtn.textContent = 'Back to Menu';
+    backBtn.style.cssText = 'color:#fff;border:none;padding:8px 18px;border-radius:8px;font-size:13px;font-weight:700;font-family:system-ui,sans-serif;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,0.4);background:rgba(239,68,68,0.9);';
+    backBtn.addEventListener('click', function() {
+      _exitShuffleSandbox();
+    });
+    btnBar.appendChild(backBtn);
+  }
+
+  // Override hint text
+  var hint = document.getElementById('shuffleHint');
+  if (hint) {
+    hint.textContent = 'Shuffle Sandbox — drag tiles freely';
+  }
+
+  // Patch touch handlers to use finger-size detection
+  _patchSandboxTouchHandlers();
+}
+
+function _patchSandboxTouchHandlers() {
+  var overlay = document.getElementById('shufflePhysicsOverlay');
+  if (!overlay) return;
+
+  // Remove existing touch listeners by replacing overlay
+  var newOverlay = overlay.cloneNode(false);
+  overlay.parentNode.replaceChild(newOverlay, overlay);
+  newOverlay.id = 'shufflePhysicsOverlay';
+
+  // Re-add mouse handlers (same as original)
+  var _mouseDown = false;
+  newOverlay.addEventListener('mousedown', function(e) {
+    _mouseDown = true;
+    _shufflePhysicsPointer._isTouch = false;
+    var br = newOverlay.getBoundingClientRect();
+    _shufflePhysicsPointer.x = _shufflePhysicsPointer.px = e.clientX - br.left;
+    _shufflePhysicsPointer.y = _shufflePhysicsPointer.py = e.clientY - br.top;
+    _shufflePhysicsPointer.vx = 0; _shufflePhysicsPointer.vy = 0;
+    if (!SHUFFLE_PHYSICS.pushOnHover) _shufflePhysicsPointer.active = true;
+    newOverlay.style.cursor = 'grabbing';
+  });
+  newOverlay.addEventListener('mousemove', function(e) {
+    _shufflePhysicsPointer._isTouch = false;
+    var br = newOverlay.getBoundingClientRect();
+    var nx = e.clientX - br.left, ny = e.clientY - br.top;
+    _shufflePhysicsPointer.vx = nx - _shufflePhysicsPointer.x;
+    _shufflePhysicsPointer.vy = ny - _shufflePhysicsPointer.y;
+    _shufflePhysicsPointer.px = _shufflePhysicsPointer.x;
+    _shufflePhysicsPointer.py = _shufflePhysicsPointer.y;
+    _shufflePhysicsPointer.x = nx; _shufflePhysicsPointer.y = ny;
+    if (SHUFFLE_PHYSICS.pushOnHover || _mouseDown) _shufflePhysicsPointer.active = true;
+  });
+  newOverlay.addEventListener('mouseup', function() {
+    _mouseDown = false;
+    if (!SHUFFLE_PHYSICS.pushOnHover) _shufflePhysicsPointer.active = false;
+    newOverlay.style.cursor = 'crosshair';
+  });
+  newOverlay.addEventListener('mouseleave', function() {
+    _mouseDown = false;
+    _shufflePhysicsPointer.active = false;
+    newOverlay.style.cursor = 'crosshair';
+  });
+
+  // Touch handlers with finger-size detection — unlimited fingers, no auto-gather
+  newOverlay.addEventListener('touchstart', function(e) {
+    e.preventDefault();
+    _shufflePhysicsPointer._isTouch = true;
+    _shufflePhysicsPointer.active = true;
+    var br = newOverlay.getBoundingClientRect();
+    for (var ti = 0; ti < e.changedTouches.length; ti++) {
+      var t = e.changedTouches[ti];
+      var tx = t.clientX - br.left, ty = t.clientY - br.top;
+      var grabR = _sandboxGetGrabRadius(t);
+      _shuffleTouchPointers[t.identifier] = {
+        x: tx, y: ty, px: tx, py: ty, vx: 0, vy: 0,
+        grabR: grabR, radiusX: t.radiusX || 0, radiusY: t.radiusY || 0, force: t.force || 0
+      };
+    }
+    var first = e.touches[0];
+    _shufflePhysicsPointer.x = _shufflePhysicsPointer.px = first.clientX - br.left;
+    _shufflePhysicsPointer.y = _shufflePhysicsPointer.py = first.clientY - br.top;
+    _shufflePhysicsPointer.vx = 0; _shufflePhysicsPointer.vy = 0;
+  }, { passive: false });
+
+  newOverlay.addEventListener('touchmove', function(e) {
+    e.preventDefault();
+    var br = newOverlay.getBoundingClientRect();
+    for (var ti = 0; ti < e.changedTouches.length; ti++) {
+      var t = e.changedTouches[ti];
+      var tp = _shuffleTouchPointers[t.identifier];
+      if (!tp) continue;
+      var nx = t.clientX - br.left, ny = t.clientY - br.top;
+      tp.vx = nx - tp.x; tp.vy = ny - tp.y;
+      tp.px = tp.x; tp.py = tp.y;
+      tp.x = nx; tp.y = ny;
+      tp.grabR = _sandboxGetGrabRadius(t);
+      tp.radiusX = t.radiusX || 0;
+      tp.radiusY = t.radiusY || 0;
+      tp.force = t.force || 0;
+    }
+    var first = e.touches[0];
+    if (first) {
+      var nx = first.clientX - br.left, ny = first.clientY - br.top;
+      _shufflePhysicsPointer.vx = nx - _shufflePhysicsPointer.x;
+      _shufflePhysicsPointer.vy = ny - _shufflePhysicsPointer.y;
+      _shufflePhysicsPointer.px = _shufflePhysicsPointer.x;
+      _shufflePhysicsPointer.py = _shufflePhysicsPointer.y;
+      _shufflePhysicsPointer.x = nx; _shufflePhysicsPointer.y = ny;
+    }
+  }, { passive: false });
+
+  newOverlay.addEventListener('touchend', function(e) {
+    e.preventDefault();
+    for (var ti = 0; ti < e.changedTouches.length; ti++) {
+      delete _shuffleTouchPointers[e.changedTouches[ti].identifier];
+    }
+    if (e.touches.length === 0) {
+      _shufflePhysicsPointer.active = false;
+      // No auto-gather in sandbox — tiles stay where they are
+    }
+  }, { passive: false });
+
+  // Add touch ring visualization
+  _sandboxAddTouchRings(newOverlay);
+}
+
+function _sandboxAddTouchRings(overlay) {
+  var tableEl = document.getElementById('tableMain');
+
+  // Update touch rings on each physics frame
+  var origLoop = _shufflePhysicsLoop;
+  var _sandboxRingLoop = function() {
+    // Update/create touch rings
+    var touchKeys = Object.keys(_shuffleTouchPointers);
+    // Remove stale rings
+    var existingRings = tableEl.querySelectorAll('.sandboxTouchRing');
+    for (var i = 0; i < existingRings.length; i++) {
+      var ringId = existingRings[i].dataset.touchId;
+      if (touchKeys.indexOf(ringId) === -1) {
+        existingRings[i].remove();
+      }
+    }
+    // Update/create rings for active touches
+    for (var k = 0; k < touchKeys.length; k++) {
+      var id = touchKeys[k];
+      var tp = _shuffleTouchPointers[id];
+      var ring = tableEl.querySelector('.sandboxTouchRing[data-touch-id="' + id + '"]');
+      if (!ring) {
+        ring = document.createElement('div');
+        ring.className = 'sandboxTouchRing';
+        ring.dataset.touchId = id;
+        ring.style.cssText = 'position:absolute;border:2px solid rgba(255,200,50,0.5);border-radius:50%;pointer-events:none;z-index:505;transform:translate(-50%,-50%);';
+        tableEl.appendChild(ring);
+      }
+      var fingerR = tp.grabR || SHUFFLE_PHYSICS.grabRadius;
+      ring.style.width = (fingerR * 2) + 'px';
+      ring.style.height = (fingerR * 2) + 'px';
+      ring.style.left = tp.x + 'px';
+      ring.style.top = tp.y + 'px';
+    }
+  };
+
+  // Hook into the RAF loop by wrapping _shufflePhysicsLoop
+  var _origPhysicsLoop = window._shufflePhysicsLoop || _shufflePhysicsLoop;
+  // We'll use a simpler approach: setInterval for ring updates
+  var ringInterval = setInterval(function() {
+    if (!_shufflePhysicsActive || !_shuffleSandboxActive) {
+      clearInterval(ringInterval);
+      // Clean up rings
+      var rings = tableEl.querySelectorAll('.sandboxTouchRing');
+      for (var i = 0; i < rings.length; i++) rings[i].remove();
+      return;
+    }
+    _sandboxRingLoop();
+  }, 16);
+}
+
+function _exitShuffleSandbox() {
+  _shuffleSandboxActive = false;
+
+  // End shuffle physics (cleans up overlay, buttons, settings, physics engine)
+  if (_shufflePhysicsActive) {
+    // Don't let it resolve any game promise
+    _shufflePhysicsResolve = null;
+    _endShufflePhysics();
+  }
+
+  // Clean up sprites
+  spriteLayer.innerHTML = '';
+  shadowLayer.innerHTML = '';
+  sprites.length = 0;
+
+  // Clean up any remaining sandbox touch rings
+  var rings = document.querySelectorAll('.sandboxTouchRing');
+  for (var i = 0; i < rings.length; i++) rings[i].remove();
+
+  // Restore table UI
+  _setShuffleTableUI(true);
+
+  // Show home screen
+  document.getElementById('startScreenBackdrop').style.display = 'flex';
+}
 
 // ── V13.1: ROUND TRANSITION ──
 // Collects all sprites on the table, flips face-down, gathers to center.
@@ -27854,6 +28168,10 @@ document.getElementById('btnGameSettingsStart').addEventListener('click', () => 
 });
 
 // Start screen button handlers — New Game now opens Game Settings popup
+document.getElementById('btnShuffleSandbox').addEventListener('click', function() {
+  _enterShuffleSandbox();
+});
+
 document.getElementById('btnStartMultiplayer').addEventListener('click', () => {
   document.getElementById('startScreenBackdrop').style.display = 'none';
   mpBuildModeSelector();
