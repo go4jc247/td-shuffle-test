@@ -43,10 +43,29 @@ var _shuffleTileElements = [];
 var _shuffleAreaCenter = { x: 0, y: 0, r: 200 };
 var _shufflePhysicsRAF = null;
 var _shufflePhysicsPointer = { x: 0, y: 0, px: 0, py: 0, vx: 0, vy: 0, active: false, _isTouch: false };
-var _shuffleTouchPointers = {}; // keyed by touch identifier
+var _shuffleTouchPointers = {}; // keyed by touch identifier: { x, y, px, py, vx, vy, grabR }
 var _shuffleGatherActive = false;
 var _shuffleGatherStartTime = 0;
 var _shuffleGatherRampMs = 2000;
+
+// Finger-size detection (from pick_test.html)
+var TOUCH_RADIUS_SCALE = 3.0; // multiplier for touch radiusX/Y -> grab radius
+var MIN_GRAB_RADIUS = 40;
+var MAX_GRAB_RADIUS = 200;
+var FORCE_RADIUS_BONUS = 60; // extra grab radius from 3D Touch force
+
+function getGrabRadius(touch) {
+  var rx = touch.radiusX || 0;
+  var ry = touch.radiusY || 0;
+  var avgRadius = (rx + ry) / 2;
+  var force = touch.force || 0;
+  var grabR = MIN_GRAB_RADIUS;
+  if (avgRadius > 0) {
+    grabR = Math.max(MIN_GRAB_RADIUS, Math.min(MAX_GRAB_RADIUS, avgRadius * TOUCH_RADIUS_SCALE));
+  }
+  grabR += force * FORCE_RADIUS_BONUS;
+  return Math.min(grabR, MAX_GRAB_RADIUS);
+}
 
 // Recording system
 var _shuffleRecording = false;
@@ -278,26 +297,26 @@ function physicsLoop() {
     }
   }
 
-  // Apply grab force from all active pointers (unlimited fingers)
+  // Apply grab force from all active pointers (unlimited fingers, per-finger radius)
   var forcePoints = [];
   if (ptr._isTouch) {
     var touchKeys = Object.keys(_shuffleTouchPointers);
     for (var tk = 0; tk < touchKeys.length; tk++) {
       var tp = _shuffleTouchPointers[touchKeys[tk]];
-      forcePoints.push({ x: tp.x, y: tp.y, vx: tp.vx, vy: tp.vy });
+      forcePoints.push({ x: tp.x, y: tp.y, vx: tp.vx, vy: tp.vy, grabR: tp.grabR || SP.grabRadius });
     }
   } else if (ptr.active) {
-    // Mouse: primary + 180 degree mirror
-    forcePoints.push({ x: ptr.x, y: ptr.y, vx: ptr.vx, vy: ptr.vy });
+    // Mouse: primary + 180 degree mirror (uses settings grabRadius)
+    forcePoints.push({ x: ptr.x, y: ptr.y, vx: ptr.vx, vy: ptr.vy, grabR: SP.grabRadius });
     var ac = _shuffleAreaCenter;
-    forcePoints.push({ x: 2 * ac.x - ptr.x, y: 2 * ac.y - ptr.y, vx: -ptr.vx, vy: -ptr.vy });
+    forcePoints.push({ x: 2 * ac.x - ptr.x, y: 2 * ac.y - ptr.y, vx: -ptr.vx, vy: -ptr.vy, grabR: SP.grabRadius });
   }
 
   for (var fp = 0; fp < forcePoints.length; fp++) {
     var pt = forcePoints[fp];
     var spd = Math.hypot(pt.vx, pt.vy);
     if (spd < 0.5) continue;
-    var R = SP.grabRadius, R2 = R * R;
+    var R = pt.grabR, R2 = R * R;
     var ux = pt.vx / spd, uy = pt.vy / spd;
     for (var i = 0; i < _shufflePhysicsBodies.length; i++) {
       var b = _shufflePhysicsBodies[i];
@@ -370,7 +389,8 @@ function updateTouchRings() {
       ring.dataset.touchId = id;
       tableEl.appendChild(ring);
     }
-    var size = SP.grabRadius * 2;
+    var fingerR = tp.grabR || SP.grabRadius;
+    var size = fingerR * 2;
     ring.style.width = size + 'px';
     ring.style.height = size + 'px';
     ring.style.left = tp.x + 'px';
@@ -515,27 +535,12 @@ function createUI(tableEl) {
 
   var btnStyle = 'color:#fff;border:none;padding:8px 16px;border-radius:8px;font-size:12px;font-weight:700;font-family:system-ui,sans-serif;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.4);';
 
-  // Gather
-  var gatherBtn = document.createElement('button');
-  gatherBtn.id = 'gatherBtn';
-  gatherBtn.textContent = 'Gather';
-  gatherBtn.style.cssText = btnStyle + 'background:rgba(59,130,246,0.9);';
-  gatherBtn.addEventListener('click', function() {
-    _shuffleGatherActive = true;
-    _shuffleGatherStartTime = performance.now();
-    gatherBtn.style.opacity = '0.5';
-    gatherBtn.style.pointerEvents = 'none';
-  });
-  btnBar.appendChild(gatherBtn);
-
   // Scatter
   var scatterBtn = document.createElement('button');
   scatterBtn.textContent = 'Scatter';
   scatterBtn.style.cssText = btnStyle + 'background:rgba(168,85,247,0.9);';
   scatterBtn.addEventListener('click', function() {
     _shuffleGatherActive = false;
-    gatherBtn.style.opacity = '1';
-    gatherBtn.style.pointerEvents = '';
     for (var i = 0; i < _shufflePhysicsBodies.length; i++) {
       var b = _shufflePhysicsBodies[i];
       Matter.Body.setVelocity(b, {
@@ -634,17 +639,7 @@ function createUI(tableEl) {
   var _mouseDown = false;
   var _mouseIdleTimer = null;
 
-  function triggerAutoGather() {
-    if (!_shuffleGatherActive && _shufflePhysicsActive) {
-      _shuffleGatherActive = true;
-      _shuffleGatherStartTime = performance.now();
-    }
-  }
-  function resetMouseIdle() {
-    if (_mouseIdleTimer) clearTimeout(_mouseIdleTimer);
-    if (_shuffleGatherActive) _shuffleGatherActive = false;
-    _mouseIdleTimer = setTimeout(triggerAutoGather, SHUFFLE_PHYSICS.autoGatherDelay);
-  }
+  // No auto-gather — tiles move freely
 
   overlay.addEventListener('mousedown', function(e) {
     _mouseDown = true;
@@ -667,41 +662,34 @@ function createUI(tableEl) {
     _shufflePhysicsPointer.x = nx;
     _shufflePhysicsPointer.y = ny;
     if (SHUFFLE_PHYSICS.pushOnHover || _mouseDown) _shufflePhysicsPointer.active = true;
-    if (_shufflePhysicsPointer.active) resetMouseIdle();
   });
   overlay.addEventListener('mouseup', function() {
     _mouseDown = false;
     if (!SHUFFLE_PHYSICS.pushOnHover) _shufflePhysicsPointer.active = false;
     overlay.style.cursor = 'crosshair';
-    triggerAutoGather();
   });
   overlay.addEventListener('mouseleave', function() {
     _mouseDown = false;
     _shufflePhysicsPointer.active = false;
     overlay.style.cursor = 'crosshair';
-    if (_mouseIdleTimer) clearTimeout(_mouseIdleTimer);
-    triggerAutoGather();
   });
 
   // ── Touch handlers — unlimited fingers ──
   overlay.addEventListener('touchstart', function(e) {
     e.preventDefault();
-    if (_shuffleGatherActive) _shuffleGatherActive = false;
     _shufflePhysicsPointer._isTouch = true;
     _shufflePhysicsPointer.active = true;
     var br = overlay.getBoundingClientRect();
     for (var ti = 0; ti < e.changedTouches.length; ti++) {
       var t = e.changedTouches[ti];
       var tx = t.clientX - br.left, ty = t.clientY - br.top;
-      _shuffleTouchPointers[t.identifier] = { x: tx, y: ty, px: tx, py: ty, vx: 0, vy: 0 };
+      var grabR = getGrabRadius(t);
+      _shuffleTouchPointers[t.identifier] = { x: tx, y: ty, px: tx, py: ty, vx: 0, vy: 0, grabR: grabR, radiusX: t.radiusX || 0, radiusY: t.radiusY || 0, force: t.force || 0 };
     }
     var first = e.touches[0];
     _shufflePhysicsPointer.x = _shufflePhysicsPointer.px = first.clientX - br.left;
     _shufflePhysicsPointer.y = _shufflePhysicsPointer.py = first.clientY - br.top;
     _shufflePhysicsPointer.vx = 0; _shufflePhysicsPointer.vy = 0;
-    // Reset idle
-    if (_mouseIdleTimer) clearTimeout(_mouseIdleTimer);
-    if (gatherBtn) { gatherBtn.style.opacity = '1'; gatherBtn.style.pointerEvents = ''; }
   }, { passive: false });
 
   overlay.addEventListener('touchmove', function(e) {
@@ -716,6 +704,10 @@ function createUI(tableEl) {
       tp.vy = ny - tp.y;
       tp.px = tp.x; tp.py = tp.y;
       tp.x = nx; tp.y = ny;
+      tp.grabR = getGrabRadius(t);
+      tp.radiusX = t.radiusX || 0;
+      tp.radiusY = t.radiusY || 0;
+      tp.force = t.force || 0;
     }
     var first = e.touches[0];
     if (first) {
@@ -727,9 +719,7 @@ function createUI(tableEl) {
       _shufflePhysicsPointer.x = nx;
       _shufflePhysicsPointer.y = ny;
     }
-    // Reset idle timer
-    if (_mouseIdleTimer) clearTimeout(_mouseIdleTimer);
-    _mouseIdleTimer = setTimeout(triggerAutoGather, SHUFFLE_PHYSICS.autoGatherDelay);
+    // No auto-gather — free movement
   }, { passive: false });
 
   overlay.addEventListener('touchend', function(e) {
@@ -740,7 +730,6 @@ function createUI(tableEl) {
     if (e.touches.length === 0) {
       _shufflePhysicsPointer.active = false;
       _shufflePhysicsPointer._isTouch = false;
-      triggerAutoGather();
     }
   }, { passive: false });
 
@@ -864,15 +853,41 @@ function createSettingsPanel(tableEl) {
   slider('Force Curve', 'boundaryExponent', 1, 6, 0.5, 1);
   slider('Escape Damping', 'boundaryDamping', 0.5, 1.0, 0.01, 2);
 
-  section('Gather');
-  slider('Gather Force', 'gatherForce', 0.005, 0.2, 0.005, 3);
-  slider('Gather Radius', 'gatherRadius', 20, 200, 5, 0);
-  slider('Gather Damping', 'gatherDamping', 0.7, 1.0, 0.01, 2);
-  slider('Auto-Gather Delay (ms)', 'autoGatherDelay', 100, 3000, 50, 0);
-
   section('Scatter');
   slider('Scatter Force', 'scatterForce', 0.01, 0.3, 0.01, 2);
   slider('Scatter Spin', 'scatterSpin', 0.0, 0.5, 0.01, 2);
+
+  section('Touch / Finger Size');
+  // These aren't in SP — they're globals, but wire them up the same way
+  (function() {
+    function globalSlider(label, getter, setter, min, max, step, decimals) {
+      var row = document.createElement('div');
+      row.style.cssText = 'margin-bottom:10px;';
+      var top = document.createElement('div');
+      top.style.cssText = 'display:flex;justify-content:space-between;margin-bottom:3px;';
+      var lbl = document.createElement('span');
+      lbl.style.cssText = 'color:rgba(255,255,255,0.6);font-size:11px;';
+      lbl.textContent = label;
+      var val = document.createElement('span');
+      val.style.cssText = 'color:rgba(80,210,110,0.95);font-size:11px;font-weight:bold;min-width:40px;text-align:right;';
+      val.textContent = decimals === 0 ? Math.round(getter()) : getter().toFixed(decimals);
+      top.appendChild(lbl); top.appendChild(val);
+      var sl = document.createElement('input');
+      sl.type = 'range'; sl.min = min; sl.max = max; sl.step = step; sl.value = getter();
+      sl.style.cssText = 'width:100%;-webkit-appearance:none;height:3px;background:rgba(255,255,255,0.15);border-radius:2px;outline:none;cursor:pointer;';
+      sl.addEventListener('input', function() {
+        var v = parseFloat(sl.value);
+        setter(v);
+        val.textContent = decimals === 0 ? Math.round(v) : v.toFixed(decimals);
+      });
+      row.appendChild(top); row.appendChild(sl);
+      panel.appendChild(row);
+    }
+    globalSlider('Touch Radius Scale', function(){ return TOUCH_RADIUS_SCALE; }, function(v){ TOUCH_RADIUS_SCALE = v; }, 1.0, 8.0, 0.5, 1);
+    globalSlider('Min Grab Radius', function(){ return MIN_GRAB_RADIUS; }, function(v){ MIN_GRAB_RADIUS = v; }, 10, 100, 5, 0);
+    globalSlider('Max Grab Radius', function(){ return MAX_GRAB_RADIUS; }, function(v){ MAX_GRAB_RADIUS = v; }, 50, 400, 10, 0);
+    globalSlider('Force Radius Bonus', function(){ return FORCE_RADIUS_BONUS; }, function(v){ FORCE_RADIUS_BONUS = v; }, 0, 150, 5, 0);
+  })();
 
   section('Visual');
   toggle('Show Touch Rings', 'showTouchRings');
@@ -960,14 +975,20 @@ function createSettingsPanel(tableEl) {
   // Finger count display
   var fingerCount = document.createElement('div');
   fingerCount.id = 'fingerCount';
-  fingerCount.style.cssText = 'color:rgba(255,255,255,0.5);font-size:10px;margin-top:8px;text-align:center;';
+  fingerCount.style.cssText = 'color:rgba(255,255,255,0.5);font-size:10px;margin-top:8px;text-align:left;font-family:monospace;white-space:pre;';
   fingerCount.textContent = 'Touch: 0 fingers';
   panel.appendChild(fingerCount);
 
-  // Update finger count periodically
+  // Update finger count + touch debug periodically
   setInterval(function() {
-    var n = Object.keys(_shuffleTouchPointers).length;
-    fingerCount.textContent = 'Touch: ' + n + ' finger' + (n !== 1 ? 's' : '');
+    var keys = Object.keys(_shuffleTouchPointers);
+    var n = keys.length;
+    var lines = ['Fingers: ' + n];
+    for (var i = 0; i < keys.length; i++) {
+      var tp = _shuffleTouchPointers[keys[i]];
+      lines.push('#' + keys[i] + ' r=' + (tp.grabR||0).toFixed(0) + ' rx=' + (tp.radiusX||0).toFixed(1) + ' ry=' + (tp.radiusY||0).toFixed(1) + ' f=' + (tp.force||0).toFixed(2));
+    }
+    fingerCount.textContent = lines.join('\n');
   }, 200);
 }
 
