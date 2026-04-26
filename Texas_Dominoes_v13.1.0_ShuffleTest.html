@@ -18504,7 +18504,7 @@ var _sandboxShakeLastTime = 0;
 var _sandboxShakeCooldown = 300; // ms between shake bursts
 var _sandboxTiltPrevSignX = 0; // track tilt direction for zero-crossing detection
 var _sandboxTiltPrevSignY = 0;
-var _sandboxTiltDirs = []; // per-body random direction angles (radians)
+var _sandboxTiltDirs = []; // per-body: 1 = go with tilt, -1 = go against (float vs sink)
 
 function _sandboxStartShakeDetection() {
   if (typeof DeviceMotionEvent === 'undefined') return;
@@ -18554,15 +18554,15 @@ function _sandboxBindShake() {
       var tiltForce = SP.tiltStrength * SP.motionSensitivity * 0.006;
       var bodyCount = _shufflePhysicsBodies.length;
 
-      // Initialize per-body random directions if needed
+      // Initialize per-body float/sink assignments if needed
       if (_sandboxTiltDirs.length !== bodyCount) {
         _sandboxTiltDirs = [];
         for (var j = 0; j < bodyCount; j++) {
-          _sandboxTiltDirs.push(Math.random() * Math.PI * 2);
+          _sandboxTiltDirs.push(Math.random() < 0.5 ? 1 : -1);
         }
       }
 
-      // Detect zero-crossings on X or Y axis — re-randomize directions
+      // Detect zero-crossings on X or Y axis — re-shuffle who floats vs sinks
       var signX = gx > 0.5 ? 1 : (gx < -0.5 ? -1 : 0);
       var signY = gy > 0.5 ? 1 : (gy < -0.5 ? -1 : 0);
       var crossed = false;
@@ -18573,7 +18573,7 @@ function _sandboxBindShake() {
 
       if (crossed) {
         for (var j = 0; j < bodyCount; j++) {
-          _sandboxTiltDirs[j] = Math.random() * Math.PI * 2;
+          _sandboxTiltDirs[j] = Math.random() < 0.5 ? 1 : -1;
         }
       }
 
@@ -18585,20 +18585,16 @@ function _sandboxBindShake() {
       }
       if (_sandboxMouseGrab) grabbedSet[_sandboxMouseGrab.body.id] = true;
 
-      // Tilt angle from accelerometer
-      var tiltAngle = Math.atan2(-gy, gx);
-
       for (var i = 0; i < bodyCount; i++) {
         var b = _shufflePhysicsBodies[i];
         if (b.isStatic || grabbedSet[b.id]) continue;
 
-        // Blend tilt direction with this tile's random offset
-        // Each tile drifts in its own direction, scaled by tilt magnitude
-        var bodyAngle = tiltAngle + _sandboxTiltDirs[i];
+        // Float (+1) goes with tilt, sink (-1) goes against
+        var dir = _sandboxTiltDirs[i];
         var forceMag = tiltForce * b.mass * Math.min(tiltMag, 9.8);
         Matter.Body.applyForce(b, b.position, {
-          x: Math.cos(bodyAngle) * forceMag,
-          y: Math.sin(bodyAngle) * forceMag
+          x: gx * dir * forceMag,
+          y: -gy * dir * forceMag
         });
       }
     }
