@@ -16676,18 +16676,17 @@ function _playRecording(rec, cx, cy, r, ptr) {
   var speedMult = SP.playbackSpeed;
   var strengthMult = SP.playbackStrength;
 
-  // Ghost finger indicator
-  var ghostEl = null;
-  if (SP.playbackShowFinger) {
-    var tableEl = document.getElementById('tableMain');
-    ghostEl = document.createElement('div');
-    ghostEl.className = 'playbackGhost';
-    ghostEl.style.cssText = 'position:absolute;width:' + (SP.grabRadius * 2) + 'px;height:' + (SP.grabRadius * 2) + 'px;border:3px solid rgba(255,100,100,0.7);border-radius:50%;pointer-events:none;z-index:505;transform:translate(-50%,-50%);background:rgba(255,100,100,0.1);display:none;';
-    tableEl.appendChild(ghostEl);
-  }
+  // Ghost finger indicator (created dynamically per finger during playback)
+  var ghostEl = SP.playbackShowFinger ? true : null; // flag to enable ghost creation
 
   var playTimer = setInterval(function() {
-    if (!_shufflePhysicsActive) { clearInterval(playTimer); _sandboxPlaybackActive = false; delete _shuffleTouchPointers['_playback']; if (ghostEl) ghostEl.remove(); return; }
+    if (!_shufflePhysicsActive) {
+      clearInterval(playTimer); _sandboxPlaybackActive = false;
+      var ek = Object.keys(_shuffleTouchPointers);
+      for (var ei = 0; ei < ek.length; ei++) { if (ek[ei].indexOf('_pb') === 0) delete _shuffleTouchPointers[ek[ei]]; }
+      var gs = document.querySelectorAll('.playbackGhost'); for (var gi = 0; gi < gs.length; gi++) gs[gi].remove();
+      return;
+    }
     var now = (performance.now() - startTime) * speedMult;
 
     while (idx < points.length - 1 && points[idx + 1].t <= now) idx++;
@@ -16696,8 +16695,13 @@ function _playRecording(rec, cx, cy, r, ptr) {
       clearInterval(playTimer);
       ptr.active = false;
       _sandboxPlaybackActive = false;
-      delete _shuffleTouchPointers['_playback'];
-      if (ghostEl) ghostEl.remove();
+      // Clean up all playback touch pointers and ghosts
+      var tpKeys = Object.keys(_shuffleTouchPointers);
+      for (var tk = 0; tk < tpKeys.length; tk++) {
+        if (tpKeys[tk].indexOf('_pb') === 0) delete _shuffleTouchPointers[tpKeys[tk]];
+      }
+      var ghosts = document.querySelectorAll('.playbackGhost');
+      for (var gi = 0; gi < ghosts.length; gi++) ghosts[gi].remove();
       // Restart idle timer now that playback is done
       if (_shuffleSandboxActive) _sandboxResetIdleTimer();
       // In sandbox mode, just stop — don't tear down physics
@@ -16733,47 +16737,88 @@ function _playRecording(rec, cx, cy, r, ptr) {
       }
     }
 
-    // Find nearest motion points (skip action events for interpolation)
-    var p0 = points[idx];
-    if (p0.action) return; // action-only frame, already handled above
-    var p1idx = Math.min(idx + 1, points.length - 1);
-    while (p1idx < points.length - 1 && points[p1idx].action) p1idx++;
-    var p1 = points[p1idx];
-    if (p1.action) p1 = p0; // fallback if no more motion points
-    var dt = p1.t - p0.t;
-    var frac = dt > 0 ? Math.min(1, (now - p0.t) / dt) : 1;
+    // Collect all finger data at the current timestamp
+    // Points may have multiple entries per timestamp (one per finger)
+    var fingerData = {}; // f -> { x, y, vx, vy, grabR }
+    // Scan from idx backward and forward to find all fingers near current time
+    for (var si = Math.max(0, idx - 5); si <= Math.min(points.length - 1, idx + 5); si++) {
+      var sp = points[si];
+      if (sp.action) continue;
+      if (Math.abs(sp.t - now) > 50) continue; // within 50ms window
+      var fid = sp.f !== undefined ? sp.f : 0;
+      // Find next point for this finger for interpolation
+      var spNext = sp;
+      for (var sn = si + 1; sn < Math.min(points.length, si + 20); sn++) {
+        if (points[sn].action) continue;
+        var snf = points[sn].f !== undefined ? points[sn].f : 0;
+        if (snf === fid) { spNext = points[sn]; break; }
+      }
+      var sdt = spNext.t - sp.t;
+      var sfrac = sdt > 0 ? Math.min(1, (now - sp.t) / sdt) : 1;
+      sfrac = Math.max(0, sfrac);
+      fingerData[fid] = {
+        x: cx + (sp.x + (spNext.x - sp.x) * sfrac) * r,
+        y: cy + (sp.y + (spNext.y - sp.y) * sfrac) * r,
+        vx: (sp.vx + (spNext.vx - sp.vx) * sfrac) * r * strengthMult,
+        vy: (sp.vy + (spNext.vy - sp.vy) * sfrac) * r * strengthMult,
+        grabR: sp.grabR || 0
+      };
+    }
 
-    var ix = p0.x + (p1.x - p0.x) * frac;
-    var iy = p0.y + (p1.y - p0.y) * frac;
-    var ivx = p0.vx + (p1.vx - p0.vx) * frac;
-    var ivy = p0.vy + (p1.vy - p0.vy) * frac;
+    var fingerKeys = Object.keys(fingerData);
+    if (fingerKeys.length === 0) return;
 
-    ptr.x = cx + ix * r;
-    ptr.y = cy + iy * r;
-    ptr.vx = ivx * r * strengthMult;
-    ptr.vy = ivy * r * strengthMult;
+    // Set up touch pointers for each finger
     ptr.active = true;
-    ptr._isTouch = true; // use touch path (single force point, no mirror)
+    ptr._isTouch = true;
+    // Clean old playback pointers
+    var existingKeys = Object.keys(_shuffleTouchPointers);
+    for (var ek = 0; ek < existingKeys.length; ek++) {
+      if (existingKeys[ek].indexOf('_pb') === 0) delete _shuffleTouchPointers[existingKeys[ek]];
+    }
+    // Create a touch pointer per recorded finger
+    var anyMoving = false;
+    for (var fk = 0; fk < fingerKeys.length; fk++) {
+      var fd = fingerData[fingerKeys[fk]];
+      var pbKey = '_pb' + fingerKeys[fk];
+      _shuffleTouchPointers[pbKey] = {
+        x: fd.x, y: fd.y, vx: fd.vx, vy: fd.vy,
+        px: fd.x, py: fd.y, grabR: fd.grabR
+      };
+      if (Math.hypot(fd.vx, fd.vy) > 0.5) anyMoving = true;
+    }
+    // Sync primary pointer to first finger
+    var first = fingerData[fingerKeys[0]];
+    ptr.x = first.x; ptr.y = first.y;
+    ptr.vx = first.vx; ptr.vy = first.vy;
 
-    // Reset idle timer when pointer is moving (just like a real finger)
-    var spd = Math.hypot(ptr.vx, ptr.vy);
-    if (spd > 0.5 && _shuffleSandboxActive) _sandboxResetIdleTimer();
+    if (anyMoving && _shuffleSandboxActive) _sandboxResetIdleTimer();
 
-    // Set recorded grab radius via a fake touch pointer so force uses correct area
-    var recGrabR = p0.grabR || 0;
-    _shuffleTouchPointers['_playback'] = {
-      x: ptr.x, y: ptr.y, vx: ptr.vx, vy: ptr.vy,
-      px: ptr.x, py: ptr.y, grabR: recGrabR
-    };
-
-    // Update ghost finger position and size
+    // Update ghost finger(s)
     if (ghostEl) {
-      var ghostR = recGrabR > 0 ? recGrabR : SHUFFLE_PHYSICS.grabRadius;
-      ghostEl.style.width = (ghostR * 2) + 'px';
-      ghostEl.style.height = (ghostR * 2) + 'px';
-      ghostEl.style.display = '';
-      ghostEl.style.left = ptr.x + 'px';
-      ghostEl.style.top = ptr.y + 'px';
+      // Remove extra ghosts
+      var oldGhosts = document.querySelectorAll('.playbackGhost');
+      for (var og = 1; og < oldGhosts.length; og++) oldGhosts[og].remove();
+      // Update/create ghost per finger
+      var tableEl = document.getElementById('tableMain');
+      for (var fk = 0; fk < fingerKeys.length; fk++) {
+        var fd = fingerData[fingerKeys[fk]];
+        var gid = 'playbackGhost' + fingerKeys[fk];
+        var gel = document.getElementById(gid);
+        if (!gel) {
+          gel = document.createElement('div');
+          gel.id = gid;
+          gel.className = 'playbackGhost';
+          var ghostR = fd.grabR > 0 ? fd.grabR : SHUFFLE_PHYSICS.grabRadius;
+          gel.style.cssText = 'position:absolute;width:' + (ghostR * 2) + 'px;height:' + (ghostR * 2) + 'px;border:3px solid rgba(255,100,100,0.7);border-radius:50%;pointer-events:none;z-index:505;transform:translate(-50%,-50%);background:rgba(255,100,100,0.1);';
+          tableEl.appendChild(gel);
+        }
+        var ghostR = fd.grabR > 0 ? fd.grabR : SHUFFLE_PHYSICS.grabRadius;
+        gel.style.width = (ghostR * 2) + 'px';
+        gel.style.height = (ghostR * 2) + 'px';
+        gel.style.left = fd.x + 'px';
+        gel.style.top = fd.y + 'px';
+      }
     }
   }, 16);
 }
@@ -17141,23 +17186,23 @@ function _shufflePhysicsLoop() {
     }
   }
 
-  // Record pointer data if recording (all active force points + grab radius)
-  if (_shuffleRecording && ptr.active) {
+  // Record all active touch pointers individually with finger IDs
+  if (_shuffleRecording) {
     var recT = performance.now() - _shuffleRecordStart;
-    // Get grab radius from first touch pointer if available
-    var recGrabR = 0;
-    if (ptr._isTouch) {
+    if (ptr._isTouch && ptr.active) {
       var tkeys = Object.keys(_shuffleTouchPointers);
-      if (tkeys.length > 0) recGrabR = _shuffleTouchPointers[tkeys[0]].grabR || 0;
-    }
-    // Record primary pointer with grab radius
-    _shuffleRecordData.push({ t: recT, x: ptr.x, y: ptr.y, vx: ptr.vx, vy: ptr.vy, grabR: recGrabR });
-    // Record additional touch pointers (finger 2+)
-    if (ptr._isTouch) {
-      for (var tk = 1; tk < tkeys.length; tk++) {
+      for (var tk = 0; tk < tkeys.length; tk++) {
         var tp = _shuffleTouchPointers[tkeys[tk]];
-        _shuffleRecordData.push({ t: recT, x: tp.x, y: tp.y, vx: tp.vx, vy: tp.vy, grabR: tp.grabR || 0 });
+        if (Math.abs(tp.vx) < 0.01 && Math.abs(tp.vy) < 0.01) continue; // skip stationary
+        _shuffleRecordData.push({
+          t: recT, f: tk, // f = finger index
+          x: tp.x, y: tp.y, vx: tp.vx, vy: tp.vy,
+          grabR: tp.grabR || 0
+        });
       }
+    } else if (ptr.active) {
+      // Mouse fallback
+      _shuffleRecordData.push({ t: recT, f: 0, x: ptr.x, y: ptr.y, vx: ptr.vx, vy: ptr.vy, grabR: 0 });
     }
   }
 
@@ -17392,6 +17437,7 @@ function _createShuffleUI(rect) {
               vy: +(pt.vy / ac.r).toFixed(4)
             };
             if (pt.grabR > 0) o.grabR = Math.round(pt.grabR);
+            if (pt.f !== undefined) o.f = pt.f;
             return o;
           });
           var recording = { points: normalized, duration: normalized[normalized.length - 1].t, ts: Date.now() };
