@@ -16676,6 +16676,7 @@ function _playRecording(rec, cx, cy, r, ptr) {
   var speedMult = SP.playbackSpeed;
   var strengthMult = SP.playbackStrength;
   var _pbWasMoving = false; // track moving→stopped transitions for idle timer
+  var _pbLiftedFingers = {}; // fingers that have been lifted — don't recreate
 
   // Ghost finger indicator — only in sandbox, not in real game
   var ghostEl = (_shuffleSandboxActive && SP.playbackShowFinger) ? true : null;
@@ -16697,10 +16698,12 @@ function _playRecording(rec, cx, cy, r, ptr) {
     if (p.action && !p._played) {
       p._played = true;
       if (p.action === 'up') {
-        // Finger lifted — remove its touch pointer and ghost
-        var upKey = '_pb' + (p.f !== undefined ? p.f : 0);
+        // Finger lifted — remove its touch pointer and ghost, mark as lifted
+        var upFid = p.f !== undefined ? p.f : 0;
+        _pbLiftedFingers[upFid] = p.t;
+        var upKey = '_pb' + upFid;
         delete _shuffleTouchPointers[upKey];
-        var upGhost = document.getElementById('playbackGhost' + (p.f !== undefined ? p.f : 0));
+        var upGhost = document.getElementById('playbackGhost' + upFid);
         if (upGhost) upGhost.remove();
       } else if (p.action === 'gather') {
         _shuffleGatherActive = true;
@@ -16755,6 +16758,11 @@ function _playRecording(rec, cx, cy, r, ptr) {
       if (sp.action) continue;
       if (Math.abs(sp.t - now) > 50) continue; // within 50ms window
       var fid = sp.f !== undefined ? sp.f : 0;
+      // Skip fingers that have been lifted (until a new motion point AFTER the lift)
+      if (_pbLiftedFingers[fid] !== undefined) {
+        if (sp.t <= _pbLiftedFingers[fid]) continue; // motion before lift — skip
+        delete _pbLiftedFingers[fid]; // motion after lift — finger is back
+      }
       // Find next point for this finger for interpolation
       var spNext = sp;
       for (var sn = si + 1; sn < Math.min(points.length, si + 20); sn++) {
