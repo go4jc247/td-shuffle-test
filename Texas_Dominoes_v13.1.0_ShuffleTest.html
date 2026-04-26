@@ -16669,10 +16669,9 @@ function _playRecording(rec, cx, cy, r, ptr) {
   var jitter = 0.01 + Math.random() * 0.02;
   var baseStrength = 0.85 + Math.random() * 0.3;
 
-  // Recordings were captured with specific grab settings.
-  // Scale velocity so playback feels the same regardless of current settings.
-  // Reference: grabStrength 0.035 (original default). Current may differ.
-  var refGrabStrength = 0.035;
+  // Recordings were captured with the current default grab settings.
+  // Scale velocity if settings have been changed from defaults so playback still matches.
+  var refGrabStrength = _shufflePhysicsDefaults.grabStrength; // what recordings were made with
   var velScale = refGrabStrength / Math.max(SP.grabStrength, 0.005);
   var strengthMult = baseStrength * velScale;
 
