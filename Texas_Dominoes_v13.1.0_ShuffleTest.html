@@ -16669,6 +16669,9 @@ function _playRecording(rec, cx, cy, r, ptr) {
   var points = rec.points;
   var idx = 0;
   var startTime = performance.now();
+  _sandboxPlaybackActive = true;
+  // Disable auto-gather during playback
+  _sandboxStopIdleTimer();
   var SP = SHUFFLE_PHYSICS;
 
   // Faithful playback — no random mirror/rotation so it matches what was recorded
@@ -16686,7 +16689,7 @@ function _playRecording(rec, cx, cy, r, ptr) {
   }
 
   var playTimer = setInterval(function() {
-    if (!_shufflePhysicsActive) { clearInterval(playTimer); delete _shuffleTouchPointers['_playback']; if (ghostEl) ghostEl.remove(); return; }
+    if (!_shufflePhysicsActive) { clearInterval(playTimer); _sandboxPlaybackActive = false; delete _shuffleTouchPointers['_playback']; if (ghostEl) ghostEl.remove(); return; }
     var now = (performance.now() - startTime) * speedMult;
 
     while (idx < points.length - 1 && points[idx + 1].t <= now) idx++;
@@ -16694,8 +16697,11 @@ function _playRecording(rec, cx, cy, r, ptr) {
     if (idx >= points.length - 1) {
       clearInterval(playTimer);
       ptr.active = false;
+      _sandboxPlaybackActive = false;
       delete _shuffleTouchPointers['_playback'];
       if (ghostEl) ghostEl.remove();
+      // Restart idle timer now that playback is done
+      if (_shuffleSandboxActive) _sandboxResetIdleTimer();
       // In sandbox mode, just stop — don't tear down physics
       if (!_shuffleSandboxActive) {
         setTimeout(function() {
@@ -16712,6 +16718,8 @@ function _playRecording(rec, cx, cy, r, ptr) {
       if (p.action === 'gather') {
         _shuffleGatherActive = true;
         _shuffleGatherStartTime = performance.now();
+      } else if (p.action === 'ungather') {
+        _shuffleGatherActive = false;
       } else if (p.action === 'scatter') {
         _shuffleGatherActive = false;
         var SP2 = SHUFFLE_PHYSICS;
@@ -17274,10 +17282,12 @@ function _createShuffleUI(rect) {
         return;
       }
       var ac = _shuffleAreaCenter;
-      var rec = allRecs[Math.floor(Math.random() * allRecs.length)];
+      // Play the most recent recording
+      var rec = allRecs[allRecs.length - 1];
       _playRecording(rec, ac.x, ac.y, ac.r, _shufflePhysicsPointer);
       replayBtn.textContent = 'Playing...';
-      setTimeout(function() { replayBtn.textContent = 'Replay'; }, 3000);
+      var dur = rec.duration || 15000;
+      setTimeout(function() { replayBtn.textContent = 'Replay'; }, dur + 500);
     });
     btnBar.appendChild(replayBtn);
 
@@ -18661,22 +18671,32 @@ var _sandboxTiltPrevSignY = 0;
 var _sandboxTiltDirs = []; // per-body: 1 = go with tilt, -1 = go against (float vs sink)
 var _sandboxIdleTimer = null; // timer for auto-gather on inactivity
 var _sandboxTransitioning = false; // true during shuffle→pick transition
+var _sandboxPlaybackActive = false; // true during replay — disables auto-gather
 
 // ── Sandbox Auto-Gather on Idle ──
 
 function _sandboxResetIdleTimer() {
   // Cancel any pending gather timer
   if (_sandboxIdleTimer) { clearTimeout(_sandboxIdleTimer); _sandboxIdleTimer = null; }
-  // If gather is running from idle, cancel it
+  // If gather is running from idle, cancel it and record the cancel
   if (_shuffleGatherActive && _sandboxMode === 'shuffle') {
     _shuffleGatherActive = false;
+    if (_shuffleRecording) {
+      var recT = performance.now() - _shuffleRecordStart;
+      _shuffleRecordData.push({ t: recT, action: 'ungather' });
+    }
   }
-  // Start new idle timer
-  if (_shuffleSandboxActive && _sandboxMode === 'shuffle' && !_sandboxTransitioning) {
+  // Start new idle timer (disabled during playback)
+  if (_shuffleSandboxActive && _sandboxMode === 'shuffle' && !_sandboxTransitioning && !_sandboxPlaybackActive) {
     _sandboxIdleTimer = setTimeout(function() {
-      if (_shuffleSandboxActive && _sandboxMode === 'shuffle' && _shufflePhysicsActive) {
+      if (_shuffleSandboxActive && _sandboxMode === 'shuffle' && _shufflePhysicsActive && !_sandboxPlaybackActive) {
         _shuffleGatherActive = true;
         _shuffleGatherStartTime = performance.now();
+        // Record auto-gather event
+        if (_shuffleRecording) {
+          var recT = performance.now() - _shuffleRecordStart;
+          _shuffleRecordData.push({ t: recT, action: 'gather' });
+        }
       }
     }, SHUFFLE_PHYSICS.autoGatherDelay);
   }
