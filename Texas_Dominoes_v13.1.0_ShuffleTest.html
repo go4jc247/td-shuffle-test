@@ -16792,9 +16792,15 @@ function _playRecording(rec, cx, cy, r, ptr) {
     ptr.x = first.x; ptr.y = first.y;
     ptr.vx = first.vx; ptr.vy = first.vy;
 
-    // Don't reset idle timer during playback — let recorded gather/ungather
-    // events control it. During live play, the idle timer handles gather
-    // naturally, and those events are in the recording.
+    // Reset idle timer only when there's real motion — same as live touch.
+    // When playback pointer pauses, idle timer fires gather naturally.
+    var maxSpd = 0;
+    for (var fk = 0; fk < fingerKeys.length; fk++) {
+      var fd2 = fingerData[fingerKeys[fk]];
+      var s = Math.hypot(fd2.vx, fd2.vy);
+      if (s > maxSpd) maxSpd = s;
+    }
+    if (maxSpd > 2.0 && _shuffleSandboxActive) _sandboxResetIdleTimer();
 
     // Update ghost finger(s)
     if (ghostEl) {
