@@ -16593,6 +16593,7 @@ var SHUFFLE_PHYSICS = {
   // ── Playback ──
   playbackStrength: 1.0,   // multiplier for AI/replay shuffle force (0.1=gentle, 2.0=strong)
   playbackSpeed: 1.0,      // speed multiplier for playback (0.5=slow, 2.0=fast)
+  playbackShowFinger: true, // show ghost finger during replay
 };
 // Store defaults for Reset button
 var _shufflePhysicsDefaults = JSON.parse(JSON.stringify(SHUFFLE_PHYSICS));
@@ -16674,8 +16675,18 @@ function _playRecording(rec, cx, cy, r, ptr) {
   var speedMult = SP.playbackSpeed;
   var strengthMult = SP.playbackStrength;
 
+  // Ghost finger indicator
+  var ghostEl = null;
+  if (SP.playbackShowFinger) {
+    var tableEl = document.getElementById('tableMain');
+    ghostEl = document.createElement('div');
+    ghostEl.className = 'playbackGhost';
+    ghostEl.style.cssText = 'position:absolute;width:' + (SP.grabRadius * 2) + 'px;height:' + (SP.grabRadius * 2) + 'px;border:3px solid rgba(255,100,100,0.7);border-radius:50%;pointer-events:none;z-index:505;transform:translate(-50%,-50%);background:rgba(255,100,100,0.1);display:none;';
+    tableEl.appendChild(ghostEl);
+  }
+
   var playTimer = setInterval(function() {
-    if (!_shufflePhysicsActive) { clearInterval(playTimer); return; }
+    if (!_shufflePhysicsActive) { clearInterval(playTimer); if (ghostEl) ghostEl.remove(); return; }
     var now = (performance.now() - startTime) * speedMult;
 
     while (idx < points.length - 1 && points[idx + 1].t <= now) idx++;
@@ -16683,6 +16694,7 @@ function _playRecording(rec, cx, cy, r, ptr) {
     if (idx >= points.length - 1) {
       clearInterval(playTimer);
       ptr.active = false;
+      if (ghostEl) ghostEl.remove();
       // In sandbox mode, just stop — don't tear down physics
       if (!_shuffleSandboxActive) {
         setTimeout(function() {
@@ -16735,6 +16747,13 @@ function _playRecording(rec, cx, cy, r, ptr) {
     ptr.vy = ivy * r * strengthMult;
     ptr.active = true;
     ptr._isTouch = true; // use touch path (single force point, no mirror)
+
+    // Update ghost finger position
+    if (ghostEl) {
+      ghostEl.style.display = '';
+      ghostEl.style.left = ptr.x + 'px';
+      ghostEl.style.top = ptr.y + 'px';
+    }
   }, 16);
 }
 
@@ -17685,6 +17704,7 @@ function _createShuffleSettingsPanel(tableEl) {
   section('Playback (AI/Replay)');
   slider('Playback Strength', 'playbackStrength', 0.05, 3.0, 0.05, 2);
   slider('Playback Speed', 'playbackSpeed', 0.3, 2.0, 0.1, 1);
+  toggle('Show Finger', 'playbackShowFinger');
 
   // ── Save / Load ──
   section('Save / Load');
