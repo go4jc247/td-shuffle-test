@@ -16692,33 +16692,7 @@ function _playRecording(rec, cx, cy, r, ptr) {
 
     while (idx < points.length - 1 && points[idx + 1].t <= now) idx++;
 
-    if (idx >= points.length - 1) {
-      clearInterval(playTimer);
-      ptr.active = false;
-      _sandboxPlaybackActive = false;
-      // Clean up all playback touch pointers and ghosts
-      var tpKeys = Object.keys(_shuffleTouchPointers);
-      for (var tk = 0; tk < tpKeys.length; tk++) {
-        if (tpKeys[tk].indexOf('_pb') === 0) delete _shuffleTouchPointers[tpKeys[tk]];
-      }
-      var ghosts = document.querySelectorAll('.playbackGhost');
-      for (var gi = 0; gi < ghosts.length; gi++) ghosts[gi].remove();
-      // Stop idle timer so scatter at end isn't followed by gather
-      if (_shuffleSandboxActive) {
-        _sandboxStopIdleTimer();
-      } else if (window._gameStopMouseIdle) {
-        window._gameStopMouseIdle();
-      }
-      // In sandbox mode, just stop — don't tear down physics
-      if (!_shuffleSandboxActive) {
-        setTimeout(function() {
-          if (_shufflePhysicsActive) _endShufflePhysics();
-        }, 400);
-      }
-      return;
-    }
-
-    // Handle action events (gather, scatter) embedded in recording
+    // Handle action events (gather, scatter, up) BEFORE end check
     var p = points[idx];
     if (p.action && !p._played) {
       p._played = true;
@@ -16746,6 +16720,30 @@ function _playRecording(rec, cx, cy, r, ptr) {
           Matter.Body.setAngularVelocity(sb, (Math.random() - 0.5) * SP2.scatterSpin * 2);
         }
       }
+    }
+
+    // End check — after actions are processed
+    if (idx >= points.length - 1) {
+      clearInterval(playTimer);
+      ptr.active = false;
+      _sandboxPlaybackActive = false;
+      var tpKeys = Object.keys(_shuffleTouchPointers);
+      for (var tk = 0; tk < tpKeys.length; tk++) {
+        if (tpKeys[tk].indexOf('_pb') === 0) delete _shuffleTouchPointers[tpKeys[tk]];
+      }
+      var ghosts = document.querySelectorAll('.playbackGhost');
+      for (var gi = 0; gi < ghosts.length; gi++) ghosts[gi].remove();
+      if (_shuffleSandboxActive) {
+        _sandboxStopIdleTimer();
+      } else if (window._gameStopMouseIdle) {
+        window._gameStopMouseIdle();
+      }
+      if (!_shuffleSandboxActive) {
+        setTimeout(function() {
+          if (_shufflePhysicsActive) _endShufflePhysics();
+        }, 400);
+      }
+      return;
     }
 
     // Collect all finger data at the current timestamp
