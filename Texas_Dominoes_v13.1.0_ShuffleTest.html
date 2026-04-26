@@ -16734,6 +16734,7 @@ function _playRecording(rec, cx, cy, r, ptr) {
     ptr.vx = ivx * r * strengthMult;
     ptr.vy = ivy * r * strengthMult;
     ptr.active = true;
+    ptr._isTouch = true; // use touch path (single force point, no mirror)
   }, 16);
 }
 
