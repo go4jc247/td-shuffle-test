@@ -16792,7 +16792,9 @@ function _playRecording(rec, cx, cy, r, ptr) {
     ptr.x = first.x; ptr.y = first.y;
     ptr.vx = first.vx; ptr.vy = first.vy;
 
-    if (anyMoving && _shuffleSandboxActive) _sandboxResetIdleTimer();
+    // Don't reset idle timer during playback — let recorded gather/ungather
+    // events control it. During live play, the idle timer handles gather
+    // naturally, and those events are in the recording.
 
     // Update ghost finger(s)
     if (ghostEl) {
