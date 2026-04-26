@@ -16703,8 +16703,8 @@ function _playRecording(rec, cx, cy, r, ptr) {
       }
       var ghosts = document.querySelectorAll('.playbackGhost');
       for (var gi = 0; gi < ghosts.length; gi++) ghosts[gi].remove();
-      // Restart idle timer now that playback is done
-      if (_shuffleSandboxActive) _sandboxResetIdleTimer();
+      // Stop idle timer so scatter at end isn't followed by gather
+      _sandboxStopIdleTimer();
       // In sandbox mode, just stop — don't tear down physics
       if (!_shuffleSandboxActive) {
         setTimeout(function() {
