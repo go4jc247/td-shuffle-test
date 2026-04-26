@@ -16704,7 +16704,11 @@ function _playRecording(rec, cx, cy, r, ptr) {
       var ghosts = document.querySelectorAll('.playbackGhost');
       for (var gi = 0; gi < ghosts.length; gi++) ghosts[gi].remove();
       // Stop idle timer so scatter at end isn't followed by gather
-      _sandboxStopIdleTimer();
+      if (_shuffleSandboxActive) {
+        _sandboxStopIdleTimer();
+      } else if (window._gameStopMouseIdle) {
+        window._gameStopMouseIdle();
+      }
       // In sandbox mode, just stop — don't tear down physics
       if (!_shuffleSandboxActive) {
         setTimeout(function() {
@@ -16803,18 +16807,30 @@ function _playRecording(rec, cx, cy, r, ptr) {
       if (s > maxSpd) maxSpd = s;
     }
     var isMoving = maxSpd > 2.0;
-    if (isMoving && !_pbWasMoving && _shuffleSandboxActive) {
+    if (isMoving && !_pbWasMoving) {
       // Transition: stopped → moving — reset idle timer (cancels gather, starts new countdown)
-      _sandboxResetIdleTimer();
-    } else if (!isMoving && _pbWasMoving && _shuffleSandboxActive) {
-      // Transition: moving → stopped — just restart the idle countdown (don't cancel active gather)
-      if (_sandboxIdleTimer) { clearTimeout(_sandboxIdleTimer); _sandboxIdleTimer = null; }
-      _sandboxIdleTimer = setTimeout(function() {
-        if (_shuffleSandboxActive && _sandboxMode === 'shuffle' && _shufflePhysicsActive) {
-          _shuffleGatherActive = true;
-          _shuffleGatherStartTime = performance.now();
-        }
-      }, SHUFFLE_PHYSICS.autoGatherDelay);
+      if (_shuffleSandboxActive) {
+        _sandboxResetIdleTimer();
+      } else if (window._gameResetMouseIdle) {
+        window._gameResetMouseIdle();
+      }
+    } else if (!isMoving && _pbWasMoving) {
+      // Transition: moving → stopped — start idle countdown for gather
+      if (_shuffleSandboxActive) {
+        if (_sandboxIdleTimer) { clearTimeout(_sandboxIdleTimer); _sandboxIdleTimer = null; }
+        _sandboxIdleTimer = setTimeout(function() {
+          if (_shuffleSandboxActive && _sandboxMode === 'shuffle' && _shufflePhysicsActive) {
+            _shuffleGatherActive = true;
+            _shuffleGatherStartTime = performance.now();
+          }
+        }, SHUFFLE_PHYSICS.autoGatherDelay);
+      } else if (window._gameTriggerAutoGather) {
+        // In main game, start countdown then trigger gather
+        if (window._gameStopMouseIdle) window._gameStopMouseIdle();
+        setTimeout(function() {
+          if (_shufflePhysicsActive) window._gameTriggerAutoGather();
+        }, SHUFFLE_PHYSICS.autoGatherDelay);
+      }
     }
     _pbWasMoving = isMoving;
 
@@ -17614,6 +17630,10 @@ function _createShuffleUI(rect) {
     if (_shuffleGatherActive) _shuffleGatherActive = false;
     _mouseIdleTimer = setTimeout(_triggerAutoGather, SHUFFLE_PHYSICS.autoGatherDelay);
   }
+  // Expose for playback to use
+  window._gameResetMouseIdle = _resetMouseIdle;
+  window._gameStopMouseIdle = function() { if (_mouseIdleTimer) { clearTimeout(_mouseIdleTimer); _mouseIdleTimer = null; } };
+  window._gameTriggerAutoGather = _triggerAutoGather;
   overlay.addEventListener('mousedown', function(e) {
     _mouseDown = true;
     _shufflePhysicsPointer._isTouch = false;
