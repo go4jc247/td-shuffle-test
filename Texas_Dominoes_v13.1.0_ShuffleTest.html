@@ -18544,14 +18544,14 @@ function _sandboxBindShake() {
     var gravAcc = e.accelerationIncludingGravity;
 
     // ── Tilt Shuffle Mode ──
-    // Each tile gets a random direction offset. When tilt crosses zero
-    // (phone changes from tilting left to right, or forward to back),
-    // all tiles get new random directions — creates a mixing/churning effect.
-    if (SP.tiltGravity && gravAcc) {
+    // Only active in shuffle mode — pick mode keeps tiles stationary
+    // Float/sink: half the tiles drift with tilt, half against, like a shallow bowl
+    if (SP.tiltGravity && gravAcc && _sandboxMode === 'shuffle') {
       var gx = gravAcc.x || 0;
       var gy = gravAcc.y || 0;
       var tiltMag = Math.sqrt(gx * gx + gy * gy);
-      var tiltForce = SP.tiltStrength * SP.motionSensitivity * 0.006;
+      // Much gentler force — shallow bowl feel, not a slide
+      var tiltForce = SP.tiltStrength * SP.motionSensitivity * 0.0008;
       var bodyCount = _shufflePhysicsBodies.length;
 
       // Initialize per-body float/sink assignments if needed
@@ -18591,7 +18591,15 @@ function _sandboxBindShake() {
 
         // Float (+1) goes with tilt, sink (-1) goes against
         var dir = _sandboxTiltDirs[i];
-        var forceMag = tiltForce * b.mass * Math.min(tiltMag, 9.8);
+        // Cap tilt magnitude and apply gently — tiles should drift, not fly
+        var effectiveTilt = Math.min(tiltMag, 5.0);
+        var forceMag = tiltForce * b.mass * effectiveTilt;
+
+        // Dampen existing velocity so tiles don't build up speed
+        var vx = b.velocity.x * 0.96;
+        var vy = b.velocity.y * 0.96;
+        Matter.Body.setVelocity(b, { x: vx, y: vy });
+
         Matter.Body.applyForce(b, b.position, {
           x: gx * dir * forceMag,
           y: -gy * dir * forceMag
@@ -18600,6 +18608,8 @@ function _sandboxBindShake() {
     }
 
     // ── Shake Burst Mode ──
+    // Only in shuffle mode — pick mode keeps tiles still
+    if (_sandboxMode === 'pick') return;
     // Uses acceleration (gravity removed) to detect actual shaking motion
     var acc = hasRaw ? rawAcc : gravAcc;
     if (!acc) return;
