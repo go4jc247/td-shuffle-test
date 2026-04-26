@@ -16694,14 +16694,44 @@ function _playRecording(rec, cx, cy, r, ptr) {
     if (idx >= points.length - 1) {
       clearInterval(playTimer);
       ptr.active = false;
-      setTimeout(function() {
-        if (_shufflePhysicsActive) _endShufflePhysics();
-      }, 400);
+      // In sandbox mode, just stop — don't tear down physics
+      if (!_shuffleSandboxActive) {
+        setTimeout(function() {
+          if (_shufflePhysicsActive) _endShufflePhysics();
+        }, 400);
+      }
       return;
     }
 
+    // Handle action events (gather, scatter) embedded in recording
+    var p = points[idx];
+    if (p.action && !p._played) {
+      p._played = true;
+      if (p.action === 'gather') {
+        _shuffleGatherActive = true;
+        _shuffleGatherStartTime = performance.now();
+      } else if (p.action === 'scatter') {
+        _shuffleGatherActive = false;
+        var SP2 = SHUFFLE_PHYSICS;
+        for (var si = 0; si < _shufflePhysicsBodies.length; si++) {
+          var sb = _shufflePhysicsBodies[si];
+          if (sb.isStatic) continue;
+          Matter.Body.setVelocity(sb, {
+            x: (Math.random() - 0.5) * SP2.scatterForce * 200,
+            y: (Math.random() - 0.5) * SP2.scatterForce * 200
+          });
+          Matter.Body.setAngularVelocity(sb, (Math.random() - 0.5) * SP2.scatterSpin * 2);
+        }
+      }
+    }
+
+    // Find nearest motion points (skip action events for interpolation)
     var p0 = points[idx];
-    var p1 = points[Math.min(idx + 1, points.length - 1)];
+    if (p0.action) return; // action-only frame, already handled above
+    var p1idx = Math.min(idx + 1, points.length - 1);
+    while (p1idx < points.length - 1 && points[p1idx].action) p1idx++;
+    var p1 = points[p1idx];
+    if (p1.action) p1 = p0; // fallback if no more motion points
     var dt = p1.t - p0.t;
     var frac = dt > 0 ? Math.min(1, (now - p0.t) / dt) : 1;
 
@@ -17174,7 +17204,11 @@ function _createShuffleUI(rect) {
       _shuffleGatherStartTime = performance.now();
       gatherBtn.style.opacity = '0.5';
       gatherBtn.style.pointerEvents = 'none';
-      // Auto-deactivate is handled in the physics loop when tiles settle
+      // Record the action
+      if (_shuffleRecording) {
+        var recT = performance.now() - _shuffleRecordStart;
+        _shuffleRecordData.push({ t: recT, action: 'gather' });
+      }
     });
     btnBar.appendChild(gatherBtn);
 
@@ -17186,6 +17220,11 @@ function _createShuffleUI(rect) {
       _shuffleGatherActive = false;
       gatherBtn.style.opacity = '1';
       gatherBtn.style.pointerEvents = '';
+      // Record the action
+      if (_shuffleRecording) {
+        var recT = performance.now() - _shuffleRecordStart;
+        _shuffleRecordData.push({ t: recT, action: 'scatter' });
+      }
       for (var i = 0; i < _shufflePhysicsBodies.length; i++) {
         var b = _shufflePhysicsBodies[i];
         Matter.Body.setVelocity(b, {
@@ -17240,6 +17279,9 @@ function _createShuffleUI(rect) {
         if (_shuffleRecordData.length > 0) {
           var ac = _shuffleAreaCenter;
           var normalized = _shuffleRecordData.map(function(pt) {
+            if (pt.action) {
+              return { t: Math.round(pt.t), action: pt.action };
+            }
             return {
               t: Math.round(pt.t),
               x: +((pt.x - ac.x) / ac.r).toFixed(4),
@@ -17281,6 +17323,9 @@ function _createShuffleUI(rect) {
       // Normalize: convert absolute positions to fractions of area center/radius
       var ac = _shuffleAreaCenter;
       var normalized = _shuffleRecordData.map(function(pt) {
+        if (pt.action) {
+          return { t: Math.round(pt.t), action: pt.action };
+        }
         return {
           t: Math.round(pt.t),
           x: +((pt.x - ac.x) / ac.r).toFixed(4),
