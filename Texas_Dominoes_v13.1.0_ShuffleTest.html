@@ -16537,35 +16537,35 @@ var SHUFFLE_PHYSICS = {
   areaColor: '#ffffff',
 
   // ── Tiles ──
-  tileScale: 0.42,
+  tileScale: 0.35,
   tileCount: 0,
 
   // ── Grab / Push ──
-  grabRadius: 100,
-  grabStrength: 0.035,
-  grabFalloff: 2,
+  grabRadius: 240,
+  grabStrength: 0.15,
+  grabFalloff: 0.5,
   pushOnHover: true,
 
   // ── Physics ──
-  timeScale: 1.0,
-  frictionAir: 0.12,
-  friction: 0.01,
-  restitution: 0.6,
-  density: 0.005,
-  posIter: 17,
-  velIter: 10,
+  timeScale: 0.8,
+  frictionAir: 0.29,
+  friction: 0.03,
+  restitution: 1.0,
+  density: 0.02,
+  posIter: 9,
+  velIter: 7,
 
   // ── Boundary (gradient force, no hard wall) ──
-  boundaryForceStart: 0.7,
-  boundaryForcePeak: 0.08,
-  boundaryExponent: 3,
-  boundaryDamping: 0.85,
+  boundaryForceStart: 0.9,
+  boundaryForcePeak: 0.3,
+  boundaryExponent: 1,
+  boundaryDamping: 0.5,
 
   // ── Gather ──
   gatherForce: 0.005,
-  gatherRadius: 125,
-  gatherDamping: 0.92,
-  autoGatherDelay: 500,
+  gatherRadius: 110,
+  gatherDamping: 0.75,
+  autoGatherDelay: 850,
 
   // ── Scatter ──
   scatterForce: 0.08,
@@ -16580,14 +16580,14 @@ var SHUFFLE_PHYSICS = {
   shadowOpacity: 0.5,
 
   // ── Motion / Tilt ──
-  motionEnabled: true,
-  motionSensitivity: 5.0,  // overall force multiplier (1=subtle, 10=extreme)
-  motionDeadZone: 0.5,     // m/s^2 — ignore below this
-  tiltGravity: true,       // continuous tilt = gravity pull
-  tiltStrength: 3.0,       // how strong tilt gravity pulls (1=gentle, 10=strong)
-  shakeThreshold: 3.0,     // m/s^2 — when shake burst kicks in on top of tilt
-  shakeMaxForce: 8.0,      // max force multiplier for violent shakes
-  tiltMaxAngle: 2.0,       // cap effective tilt magnitude (m/s^2) — higher = more range before clamping
+  motionEnabled: false,
+  motionSensitivity: 0.5,
+  motionDeadZone: 0.1,
+  tiltGravity: true,
+  tiltStrength: 5.0,
+  shakeThreshold: 1.0,
+  shakeMaxForce: 1.0,
+  tiltMaxAngle: 0.5,
 };
 // Store defaults for Reset button
 var _shufflePhysicsDefaults = JSON.parse(JSON.stringify(SHUFFLE_PHYSICS));
