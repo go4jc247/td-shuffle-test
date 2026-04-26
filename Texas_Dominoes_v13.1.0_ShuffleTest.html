@@ -16677,8 +16677,8 @@ function _playRecording(rec, cx, cy, r, ptr) {
   var strengthMult = SP.playbackStrength;
   var _pbWasMoving = false; // track moving→stopped transitions for idle timer
 
-  // Ghost finger indicator (created dynamically per finger during playback)
-  var ghostEl = SP.playbackShowFinger ? true : null; // flag to enable ghost creation
+  // Ghost finger indicator — only in sandbox, not in real game
+  var ghostEl = (_shuffleSandboxActive && SP.playbackShowFinger) ? true : null;
 
   var playTimer = setInterval(function() {
     if (!_shufflePhysicsActive) {
