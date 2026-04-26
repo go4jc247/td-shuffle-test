@@ -16849,10 +16849,16 @@ function _playRecording(rec, cx, cy, r, ptr) {
 
     // Update ghost finger(s)
     if (ghostEl) {
-      // Remove extra ghosts
-      var oldGhosts = document.querySelectorAll('.playbackGhost');
-      for (var og = 1; og < oldGhosts.length; og++) oldGhosts[og].remove();
-      // Update/create ghost per finger
+      // Aggressively remove ghosts for fingers NOT in current fingerData
+      var allGhosts = document.querySelectorAll('.playbackGhost');
+      var activeGhostIds = {};
+      for (var fk = 0; fk < fingerKeys.length; fk++) {
+        activeGhostIds['playbackGhost' + fingerKeys[fk]] = true;
+      }
+      for (var og = 0; og < allGhosts.length; og++) {
+        if (!activeGhostIds[allGhosts[og].id]) allGhosts[og].remove();
+      }
+      // Update/create ghost per active finger
       var tableEl = document.getElementById('tableMain');
       for (var fk = 0; fk < fingerKeys.length; fk++) {
         var fd = fingerData[fingerKeys[fk]];
@@ -17239,7 +17245,7 @@ function _shufflePhysicsLoop() {
     }
   }
 
-  // Record all active touch pointers individually with finger IDs
+  // Record all active touch pointers individually with stable touch IDs
   if (_shuffleRecording) {
     var recT = performance.now() - _shuffleRecordStart;
     if (ptr._isTouch && ptr.active) {
@@ -17248,7 +17254,7 @@ function _shufflePhysicsLoop() {
         var tp = _shuffleTouchPointers[tkeys[tk]];
         if (Math.abs(tp.vx) < 0.01 && Math.abs(tp.vy) < 0.01) continue; // skip stationary
         _shuffleRecordData.push({
-          t: recT, f: tk, // f = finger index
+          t: recT, f: tkeys[tk], // f = stable touch identifier
           x: tp.x, y: tp.y, vx: tp.vx, vy: tp.vy,
           grabR: tp.grabR || 0
         });
@@ -17779,14 +17785,14 @@ function _createShuffleUI(rect) {
   }, { passive: false });
   overlay.addEventListener('touchend', function(e) {
     e.preventDefault();
-    // Record finger-up events
+    // Record finger-up events using stable touch identifier
     if (_shuffleRecording) {
       var recT = performance.now() - _shuffleRecordStart;
-      var tkeys = Object.keys(_shuffleTouchPointers);
       for (var ti = 0; ti < e.changedTouches.length; ti++) {
-        var tid = e.changedTouches[ti].identifier;
-        var fIdx = tkeys.indexOf('' + tid);
-        if (fIdx >= 0) _shuffleRecordData.push({ t: recT, f: fIdx, action: 'up' });
+        var tid = '' + e.changedTouches[ti].identifier;
+        if (_shuffleTouchPointers[tid]) {
+          _shuffleRecordData.push({ t: recT, f: tid, action: 'up' });
+        }
       }
     }
     for (var ti = 0; ti < e.changedTouches.length; ti++) {
@@ -18873,14 +18879,14 @@ function _patchSandboxTouchHandlers() {
   newOverlay.addEventListener('touchend', function(e) {
     e.preventDefault();
     _sandboxResetIdleTimer();
-    // Record finger-up events
+    // Record finger-up events using stable touch identifier
     if (_shuffleRecording) {
       var recT = performance.now() - _shuffleRecordStart;
-      var tkeys = Object.keys(_shuffleTouchPointers);
       for (var ti = 0; ti < e.changedTouches.length; ti++) {
-        var tid = e.changedTouches[ti].identifier;
-        var fIdx = tkeys.indexOf('' + tid);
-        if (fIdx >= 0) _shuffleRecordData.push({ t: recT, f: fIdx, action: 'up' });
+        var tid = '' + e.changedTouches[ti].identifier;
+        if (_shuffleTouchPointers[tid]) {
+          _shuffleRecordData.push({ t: recT, f: tid, action: 'up' });
+        }
       }
     }
     for (var ti = 0; ti < e.changedTouches.length; ti++) {
