@@ -17461,18 +17461,17 @@ function _createShuffleUI(rect) {
     recordBtn.style.cssText = btnStyle + 'background:rgba(220,38,38,0.9);';
     recordBtn.addEventListener('click', function() {
       if (_shuffleRecording) {
-        // Stop recording — trim dead spots, append final gather+scatter
+        // Stop recording — only trim dead start and compress trailing gap
         _shuffleRecording = false;
-        // Trim: find first motion point and shift all timestamps
-        var firstMotionT = -1;
+
+        // Trim dead start: shift all timestamps so first event starts at t=100ms
+        var firstEventT = -1;
         for (var ti = 0; ti < _shuffleRecordData.length; ti++) {
-          if (!_shuffleRecordData[ti].action && firstMotionT < 0) {
-            firstMotionT = _shuffleRecordData[ti].t;
-            break;
-          }
+          firstEventT = _shuffleRecordData[ti].t;
+          break;
         }
-        if (firstMotionT > 100) {
-          var trimOffset = firstMotionT - 100;
+        if (firstEventT > 100) {
+          var trimOffset = firstEventT - 100;
           var trimmed = [];
           for (var ti = 0; ti < _shuffleRecordData.length; ti++) {
             var p = _shuffleRecordData[ti];
@@ -17485,16 +17484,29 @@ function _createShuffleUI(rect) {
           }
           _shuffleRecordData = trimmed;
         }
-        // Find last motion point and trim trailing dead actions
-        var lastMotionT = 0;
-        for (var ti = _shuffleRecordData.length - 1; ti >= 0; ti--) {
-          if (!_shuffleRecordData[ti].action) { lastMotionT = _shuffleRecordData[ti].t; break; }
+
+        // Compress trailing gap: if there's >500ms between second-to-last
+        // and last event, pull the last event(s) closer
+        if (_shuffleRecordData.length >= 2) {
+          // Find last motion point time
+          var lastMotionT = 0;
+          for (var ti = _shuffleRecordData.length - 1; ti >= 0; ti--) {
+            if (!_shuffleRecordData[ti].action) { lastMotionT = _shuffleRecordData[ti].t; break; }
+          }
+          // Compress any trailing actions that are >500ms after last motion
+          var maxGap = 500;
+          for (var ti = 0; ti < _shuffleRecordData.length; ti++) {
+            var p = _shuffleRecordData[ti];
+            if (p.t > lastMotionT + maxGap && p.action) {
+              // Shift this and all remaining events to be tighter
+              var excess = p.t - (lastMotionT + maxGap);
+              for (var tj = ti; tj < _shuffleRecordData.length; tj++) {
+                _shuffleRecordData[tj].t -= excess;
+              }
+              break;
+            }
+          }
         }
-        // Remove anything after last motion
-        _shuffleRecordData = _shuffleRecordData.filter(function(p) { return p.t <= lastMotionT; });
-        // Append clean ending
-        _shuffleRecordData.push({ t: lastMotionT + 200, action: 'gather' });
-        _shuffleRecordData.push({ t: lastMotionT + 2200, action: 'scatter' });
         recordBtn.textContent = 'Record';
         recordBtn.style.background = 'rgba(220,38,38,0.9)';
         exportBtn.style.display = '';
