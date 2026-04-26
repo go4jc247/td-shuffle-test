@@ -16522,6 +16522,7 @@ var _shufflePhysicsResolve = null;
 var _shuffleRecording = false;
 var _shuffleRecordData = [];  // array of { t, x, y, vx, vy }
 var _shuffleRecordStart = 0;
+var _shuffleExportedRecordings = []; // in-memory backup of exported recordings
 var _shuffleGatherActive = false;
 var _shuffleGatherStartTime = 0; // timestamp when gather was activated
 var _shuffleGatherRampMs = 2000; // ms to ramp from 0 to full gather force
@@ -16657,6 +16658,7 @@ function _playRecording(rec, cx, cy, r, ptr) {
   var points = rec.points;
   var idx = 0;
   var startTime = performance.now();
+  var SP = SHUFFLE_PHYSICS;
 
   // Random variations so no two playbacks are identical
   var speedMult = 0.85 + Math.random() * 0.3;       // 0.85x-1.15x
@@ -16665,7 +16667,14 @@ function _playRecording(rec, cx, cy, r, ptr) {
   var rotAngle = Math.random() * Math.PI * 2;
   var cosR = Math.cos(rotAngle), sinR = Math.sin(rotAngle);
   var jitter = 0.01 + Math.random() * 0.02;
-  var strengthMult = 0.85 + Math.random() * 0.3;
+  var baseStrength = 0.85 + Math.random() * 0.3;
+
+  // Recordings were captured with specific grab settings.
+  // Scale velocity so playback feels the same regardless of current settings.
+  // Reference: grabStrength 0.035 (original default). Current may differ.
+  var refGrabStrength = 0.035;
+  var velScale = refGrabStrength / Math.max(SP.grabStrength, 0.005);
+  var strengthMult = baseStrength * velScale;
 
   var playTimer = setInterval(function() {
     if (!_shufflePhysicsActive) { clearInterval(playTimer); return; }
@@ -17239,11 +17248,13 @@ function _createShuffleUI(rect) {
       });
       var recording = { points: normalized, duration: normalized[normalized.length - 1].t, ts: Date.now() };
 
-      // Save to localStorage as part of recordings array
+      // Save to localStorage AND in-memory backup
       var savedRecs = [];
       try { var sr = localStorage.getItem('shuffleRecordings'); if (sr) savedRecs = JSON.parse(sr); } catch(e) {}
       savedRecs.push(recording);
-      localStorage.setItem('shuffleRecordings', JSON.stringify(savedRecs));
+      try { localStorage.setItem('shuffleRecordings', JSON.stringify(savedRecs)); } catch(e) {}
+      // Also keep in memory so Export All works even if localStorage is cleared
+      _shuffleExportedRecordings = savedRecs;
 
       // Update count display
       var countEl = document.getElementById('shuffleRecCount');
@@ -17678,8 +17689,14 @@ function _createShuffleSettingsPanel(tableEl) {
     for (var key in SP) {
       if (SP.hasOwnProperty(key)) data.settings[key] = SP[key];
     }
-    var savedRecs = localStorage.getItem('shuffleRecordings');
-    if (savedRecs) data.recordings = JSON.parse(savedRecs);
+    // Try localStorage first, fall back to in-memory backup
+    var savedRecs = null;
+    try { savedRecs = localStorage.getItem('shuffleRecordings'); } catch(e) {}
+    if (savedRecs) {
+      data.recordings = JSON.parse(savedRecs);
+    } else if (_shuffleExportedRecordings.length > 0) {
+      data.recordings = _shuffleExportedRecordings;
+    }
     var json = JSON.stringify(data, null, 1);
     var blob = new Blob([json], { type: 'application/json' });
     var url = URL.createObjectURL(blob);
@@ -17701,8 +17718,9 @@ function _createShuffleSettingsPanel(tableEl) {
   // Show recording count
   var recCountEl = document.createElement('div');
   recCountEl.style.cssText = 'color:rgba(255,255,255,0.5);font-size:10px;margin-top:6px;text-align:center;';
-  var savedRecs = localStorage.getItem('shuffleRecordings');
-  var recCount = savedRecs ? JSON.parse(savedRecs).length : 0;
+  var savedRecs = null;
+  try { savedRecs = localStorage.getItem('shuffleRecordings'); } catch(e) {}
+  var recCount = savedRecs ? JSON.parse(savedRecs).length : _shuffleExportedRecordings.length;
   recCountEl.textContent = recCount + ' shuffle recording' + (recCount !== 1 ? 's' : '') + ' saved';
   recCountEl.id = 'shuffleRecCount';
   panel.appendChild(recCountEl);
