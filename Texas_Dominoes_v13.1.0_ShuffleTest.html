@@ -16649,9 +16649,15 @@ function _autoMixAI() {
   var cx = ac.x, cy = ac.y, r = ac.r;
   var ptr = _shufflePhysicsPointer;
 
-  // Pick a random recording (or fall back to procedural)
-  if (_shuffleRecordings.length > 0) {
-    var rec = _shuffleRecordings[Math.floor(Math.random() * _shuffleRecordings.length)];
+  // Pick a random recording from any source (or fall back to procedural)
+  var allRecs = _shuffleRecordings.slice();
+  if (_shuffleExportedRecordings.length > 0) {
+    allRecs = allRecs.concat(_shuffleExportedRecordings);
+  } else {
+    try { var sr = localStorage.getItem('shuffleRecordings'); if (sr) allRecs = allRecs.concat(JSON.parse(sr)); } catch(e) {}
+  }
+  if (allRecs.length > 0) {
+    var rec = allRecs[Math.floor(Math.random() * allRecs.length)];
     _playRecording(rec, cx, cy, r, ptr);
   } else {
     _proceduralMix(cx, cy, r, ptr);
@@ -17196,13 +17202,23 @@ function _createShuffleUI(rect) {
     replayBtn.textContent = 'Replay';
     replayBtn.style.cssText = btnStyle + 'background:rgba(14,165,233,0.9);';
     replayBtn.addEventListener('click', function() {
-      if (_shuffleRecordings.length === 0) {
+      // Check all sources: bundled, in-memory exports, and localStorage
+      var allRecs = _shuffleRecordings.slice();
+      if (_shuffleExportedRecordings.length > 0) {
+        allRecs = allRecs.concat(_shuffleExportedRecordings);
+      } else {
+        try {
+          var sr = localStorage.getItem('shuffleRecordings');
+          if (sr) allRecs = allRecs.concat(JSON.parse(sr));
+        } catch(e) {}
+      }
+      if (allRecs.length === 0) {
         replayBtn.textContent = 'No recordings';
         setTimeout(function() { replayBtn.textContent = 'Replay'; }, 1500);
         return;
       }
       var ac = _shuffleAreaCenter;
-      var rec = _shuffleRecordings[Math.floor(Math.random() * _shuffleRecordings.length)];
+      var rec = allRecs[Math.floor(Math.random() * allRecs.length)];
       _playRecording(rec, ac.x, ac.y, ac.r, _shufflePhysicsPointer);
       replayBtn.textContent = 'Playing...';
       setTimeout(function() { replayBtn.textContent = 'Replay'; }, 3000);
