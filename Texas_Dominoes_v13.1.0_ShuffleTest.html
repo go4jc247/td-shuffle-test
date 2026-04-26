@@ -18502,6 +18502,9 @@ function _patchSandboxTouchHandlers() {
 var _sandboxShakeHandler = null;
 var _sandboxShakeLastTime = 0;
 var _sandboxShakeCooldown = 300; // ms between shake bursts
+var _sandboxTiltPrevSignX = 0; // track tilt direction for zero-crossing detection
+var _sandboxTiltPrevSignY = 0;
+var _sandboxTiltDirs = []; // per-body random direction angles (radians)
 
 function _sandboxStartShakeDetection() {
   if (typeof DeviceMotionEvent === 'undefined') return;
@@ -18540,15 +18543,39 @@ function _sandboxBindShake() {
     var hasRaw = rawAcc && (rawAcc.x !== null || rawAcc.y !== null || rawAcc.z !== null);
     var gravAcc = e.accelerationIncludingGravity;
 
-    // ── Tilt Gravity Mode ──
-    // Uses accelerationIncludingGravity to detect phone orientation
-    // and apply a continuous "gravity" pull in that direction
+    // ── Tilt Shuffle Mode ──
+    // Each tile gets a random direction offset. When tilt crosses zero
+    // (phone changes from tilting left to right, or forward to back),
+    // all tiles get new random directions — creates a mixing/churning effect.
     if (SP.tiltGravity && gravAcc) {
       var gx = gravAcc.x || 0;
       var gy = gravAcc.y || 0;
-      // On iOS portrait: tilting left = negative x, tilting forward = negative y
-      // Scale so default settings produce clearly visible tile drift
+      var tiltMag = Math.sqrt(gx * gx + gy * gy);
       var tiltForce = SP.tiltStrength * SP.motionSensitivity * 0.006;
+      var bodyCount = _shufflePhysicsBodies.length;
+
+      // Initialize per-body random directions if needed
+      if (_sandboxTiltDirs.length !== bodyCount) {
+        _sandboxTiltDirs = [];
+        for (var j = 0; j < bodyCount; j++) {
+          _sandboxTiltDirs.push(Math.random() * Math.PI * 2);
+        }
+      }
+
+      // Detect zero-crossings on X or Y axis — re-randomize directions
+      var signX = gx > 0.5 ? 1 : (gx < -0.5 ? -1 : 0);
+      var signY = gy > 0.5 ? 1 : (gy < -0.5 ? -1 : 0);
+      var crossed = false;
+      if (signX !== 0 && signX !== _sandboxTiltPrevSignX && _sandboxTiltPrevSignX !== 0) crossed = true;
+      if (signY !== 0 && signY !== _sandboxTiltPrevSignY && _sandboxTiltPrevSignY !== 0) crossed = true;
+      if (signX !== 0) _sandboxTiltPrevSignX = signX;
+      if (signY !== 0) _sandboxTiltPrevSignY = signY;
+
+      if (crossed) {
+        for (var j = 0; j < bodyCount; j++) {
+          _sandboxTiltDirs[j] = Math.random() * Math.PI * 2;
+        }
+      }
 
       // Build set of currently grabbed bodies to skip them
       var grabbedSet = {};
@@ -18558,12 +18585,20 @@ function _sandboxBindShake() {
       }
       if (_sandboxMouseGrab) grabbedSet[_sandboxMouseGrab.body.id] = true;
 
-      for (var i = 0; i < _shufflePhysicsBodies.length; i++) {
+      // Tilt angle from accelerometer
+      var tiltAngle = Math.atan2(-gy, gx);
+
+      for (var i = 0; i < bodyCount; i++) {
         var b = _shufflePhysicsBodies[i];
         if (b.isStatic || grabbedSet[b.id]) continue;
+
+        // Blend tilt direction with this tile's random offset
+        // Each tile drifts in its own direction, scaled by tilt magnitude
+        var bodyAngle = tiltAngle + _sandboxTiltDirs[i];
+        var forceMag = tiltForce * b.mass * Math.min(tiltMag, 9.8);
         Matter.Body.applyForce(b, b.position, {
-          x: gx * tiltForce * b.mass,
-          y: -gy * tiltForce * b.mass
+          x: Math.cos(bodyAngle) * forceMag,
+          y: Math.sin(bodyAngle) * forceMag
         });
       }
     }
@@ -18698,8 +18733,11 @@ function _exitShuffleSandbox() {
   _sandboxMouseGrab = null;
   _sandboxMode = 'shuffle';
 
-  // Stop shake detection
+  // Stop shake detection and reset tilt state
   _sandboxStopShakeDetection();
+  _sandboxTiltDirs = [];
+  _sandboxTiltPrevSignX = 0;
+  _sandboxTiltPrevSignY = 0;
 
   // Remove pick slots
   if (_sandboxSlotEls) {
