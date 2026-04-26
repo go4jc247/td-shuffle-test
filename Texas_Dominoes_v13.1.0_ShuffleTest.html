@@ -17732,6 +17732,19 @@ function _createShuffleSettingsPanel(tableEl) {
   recCountEl.textContent = recCount + ' shuffle recording' + (recCount !== 1 ? 's' : '') + ' saved';
   recCountEl.id = 'shuffleRecCount';
   panel.appendChild(recCountEl);
+
+  // Clear all recordings button
+  var clearRecsBtn = document.createElement('button');
+  clearRecsBtn.textContent = 'Clear All Recordings';
+  clearRecsBtn.style.cssText = saveBtnStyle + 'background:rgba(239,68,68,0.6);margin-top:4px;';
+  clearRecsBtn.addEventListener('click', function() {
+    try { localStorage.removeItem('shuffleRecordings'); } catch(e) {}
+    _shuffleExportedRecordings = [];
+    recCountEl.textContent = '0 shuffle recordings saved';
+    clearRecsBtn.textContent = 'Cleared!';
+    setTimeout(function() { clearRecsBtn.textContent = 'Clear All Recordings'; }, 1500);
+  });
+  panel.appendChild(clearRecsBtn);
 }
 
 // Live-apply settings changes during shuffle
