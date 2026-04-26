@@ -17231,11 +17231,35 @@ function _createShuffleUI(rect) {
     recordBtn.style.cssText = btnStyle + 'background:rgba(220,38,38,0.9);';
     recordBtn.addEventListener('click', function() {
       if (_shuffleRecording) {
-        // Stop recording
+        // Stop recording — immediately normalize and save for Replay
         _shuffleRecording = false;
         recordBtn.textContent = 'Record';
         recordBtn.style.background = 'rgba(220,38,38,0.9)';
         exportBtn.style.display = '';
+        // Normalize and add to in-memory recordings so Replay works immediately
+        if (_shuffleRecordData.length > 0) {
+          var ac = _shuffleAreaCenter;
+          var normalized = _shuffleRecordData.map(function(pt) {
+            return {
+              t: Math.round(pt.t),
+              x: +((pt.x - ac.x) / ac.r).toFixed(4),
+              y: +((pt.y - ac.y) / ac.r).toFixed(4),
+              vx: +(pt.vx / ac.r).toFixed(4),
+              vy: +(pt.vy / ac.r).toFixed(4)
+            };
+          });
+          var recording = { points: normalized, duration: normalized[normalized.length - 1].t, ts: Date.now() };
+          _shuffleExportedRecordings.push(recording);
+          try {
+            var savedRecs = [];
+            var sr = localStorage.getItem('shuffleRecordings');
+            if (sr) savedRecs = JSON.parse(sr);
+            savedRecs.push(recording);
+            localStorage.setItem('shuffleRecordings', JSON.stringify(savedRecs));
+          } catch(e) {}
+          var countEl = document.getElementById('shuffleRecCount');
+          if (countEl) countEl.textContent = _shuffleExportedRecordings.length + ' shuffle recording' + (_shuffleExportedRecordings.length !== 1 ? 's' : '') + ' saved';
+        }
       } else {
         // Start recording
         _shuffleRecordData = [];
