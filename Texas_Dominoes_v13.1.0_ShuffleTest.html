@@ -17998,19 +17998,18 @@ function _startShuffleSandbox() {
     modeBtn.textContent = 'Shuffle';
     modeBtn.style.cssText = cBtnStyle + 'background:rgba(59,130,246,0.9);';
     modeBtn.addEventListener('click', function() {
+      if (_sandboxTransitioning) return; // ignore clicks during transition
       if (_sandboxMode === 'shuffle') {
-        _sandboxMode = 'pick';
-        modeBtn.textContent = 'Pick';
-        modeBtn.style.background = 'rgba(234,179,8,0.9)';
+        // Transition: gather → scatter → pick
+        _sandboxTransitionToPick(modeBtn);
       } else {
         _sandboxMode = 'shuffle';
         modeBtn.textContent = 'Shuffle';
         modeBtn.style.background = 'rgba(59,130,246,0.9)';
+        var hint = document.getElementById('shuffleHint');
+        if (hint) hint.textContent = 'Shuffle — swipe over tiles to push them';
+        _sandboxResetIdleTimer();
       }
-      var hint = document.getElementById('shuffleHint');
-      if (hint) hint.textContent = _sandboxMode === 'shuffle'
-        ? 'Shuffle — swipe over tiles to push them'
-        : 'Pick — drag tiles into slots below';
     });
     btnBar.appendChild(modeBtn);
 
@@ -18051,6 +18050,9 @@ function _startShuffleSandbox() {
 
   // Patch touch handlers
   _patchSandboxTouchHandlers();
+
+  // Start idle auto-gather timer
+  _sandboxResetIdleTimer();
 }
 
 // ── Pick Slots ──
@@ -18307,6 +18309,7 @@ function _patchSandboxTouchHandlers() {
   var _mouseDown = false;
   newOverlay.addEventListener('mousedown', function(e) {
     _mouseDown = true;
+    _sandboxResetIdleTimer();
     _shufflePhysicsPointer._isTouch = false;
     var br = newOverlay.getBoundingClientRect();
     var mx = e.clientX - br.left, my = e.clientY - br.top;
@@ -18354,6 +18357,7 @@ function _patchSandboxTouchHandlers() {
   });
   newOverlay.addEventListener('mouseup', function() {
     _mouseDown = false;
+    _sandboxResetIdleTimer();
     if (_sandboxMouseGrab) {
       _trySnapOrEject(_sandboxMouseGrab.body);
       _sandboxReleaseGrab(_sandboxMouseGrab);
@@ -18376,6 +18380,7 @@ function _patchSandboxTouchHandlers() {
   // Touch handlers — support both shuffle (force fields) and pick (direct grab) modes
   newOverlay.addEventListener('touchstart', function(e) {
     e.preventDefault();
+    _sandboxResetIdleTimer();
     _shufflePhysicsPointer._isTouch = true;
     var br = newOverlay.getBoundingClientRect();
 
@@ -18477,6 +18482,7 @@ function _patchSandboxTouchHandlers() {
 
   newOverlay.addEventListener('touchend', function(e) {
     e.preventDefault();
+    _sandboxResetIdleTimer();
     for (var ti = 0; ti < e.changedTouches.length; ti++) {
       var id = e.changedTouches[ti].identifier;
       // Release pick constraint and try to snap to slot
@@ -18507,6 +18513,86 @@ var _sandboxShakeCooldown = 300; // ms between shake bursts
 var _sandboxTiltPrevSignX = 0; // track tilt direction for zero-crossing detection
 var _sandboxTiltPrevSignY = 0;
 var _sandboxTiltDirs = []; // per-body: 1 = go with tilt, -1 = go against (float vs sink)
+var _sandboxIdleTimer = null; // timer for auto-gather on inactivity
+var _sandboxTransitioning = false; // true during shuffle→pick transition
+
+// ── Sandbox Auto-Gather on Idle ──
+
+function _sandboxResetIdleTimer() {
+  // Cancel any pending gather timer
+  if (_sandboxIdleTimer) { clearTimeout(_sandboxIdleTimer); _sandboxIdleTimer = null; }
+  // If gather is running from idle, cancel it
+  if (_shuffleGatherActive && _sandboxMode === 'shuffle') {
+    _shuffleGatherActive = false;
+  }
+  // Start new idle timer
+  if (_shuffleSandboxActive && _sandboxMode === 'shuffle' && !_sandboxTransitioning) {
+    _sandboxIdleTimer = setTimeout(function() {
+      if (_shuffleSandboxActive && _sandboxMode === 'shuffle' && _shufflePhysicsActive) {
+        _shuffleGatherActive = true;
+        _shuffleGatherStartTime = performance.now();
+      }
+    }, SHUFFLE_PHYSICS.autoGatherDelay);
+  }
+}
+
+function _sandboxStopIdleTimer() {
+  if (_sandboxIdleTimer) { clearTimeout(_sandboxIdleTimer); _sandboxIdleTimer = null; }
+}
+
+// Transition: shuffle → pick — gather, wait for settle, gentle scatter, then freeze
+function _sandboxTransitionToPick(modeBtn) {
+  _sandboxTransitioning = true;
+  _sandboxStopIdleTimer();
+
+  // Step 1: gather
+  _shuffleGatherActive = true;
+  _shuffleGatherStartTime = performance.now();
+
+  var hint = document.getElementById('shuffleHint');
+  if (hint) hint.textContent = 'Gathering tiles...';
+
+  // Step 2: wait for tiles to settle near center, then gentle scatter
+  var checkSettle = setInterval(function() {
+    if (!_shuffleSandboxActive) { clearInterval(checkSettle); _sandboxTransitioning = false; return; }
+
+    var totalSpeed = 0;
+    for (var i = 0; i < _shufflePhysicsBodies.length; i++) {
+      var b = _shufflePhysicsBodies[i];
+      totalSpeed += Math.abs(b.velocity.x) + Math.abs(b.velocity.y);
+    }
+    var avgSpeed = totalSpeed / (_shufflePhysicsBodies.length || 1);
+
+    // Wait until tiles are mostly settled
+    if (!_shuffleGatherActive || avgSpeed < 1.0) {
+      clearInterval(checkSettle);
+      _shuffleGatherActive = false;
+
+      if (hint) hint.textContent = 'Spreading tiles...';
+
+      // Step 3: gentle scatter — just enough space between tiles
+      var SP = SHUFFLE_PHYSICS;
+      for (var i = 0; i < _shufflePhysicsBodies.length; i++) {
+        var b = _shufflePhysicsBodies[i];
+        if (b.isStatic) continue;
+        Matter.Body.setVelocity(b, {
+          x: (Math.random() - 0.5) * SP.scatterForce * 80,
+          y: (Math.random() - 0.5) * SP.scatterForce * 80
+        });
+        Matter.Body.setAngularVelocity(b, (Math.random() - 0.5) * SP.scatterSpin);
+      }
+
+      // Step 4: wait for scatter to settle, then switch to pick mode
+      setTimeout(function() {
+        _sandboxMode = 'pick';
+        modeBtn.textContent = 'Pick';
+        modeBtn.style.background = 'rgba(234,179,8,0.9)';
+        if (hint) hint.textContent = 'Pick — drag tiles into slots below';
+        _sandboxTransitioning = false;
+      }, 800);
+    }
+  }, 100);
+}
 
 function _sandboxStartShakeDetection() {
   if (typeof DeviceMotionEvent === 'undefined') return;
@@ -18552,6 +18638,8 @@ function _sandboxBindShake() {
       var gx = gravAcc.x || 0;
       var gy = gravAcc.y || 0;
       var tiltMag = Math.sqrt(gx * gx + gy * gy);
+      // If tilting beyond dead zone, reset idle timer (cancel auto-gather)
+      if (tiltMag > SP.motionDeadZone + 1.0) _sandboxResetIdleTimer();
       // Much gentler force — shallow bowl feel, not a slide
       var tiltForce = SP.tiltStrength * SP.motionSensitivity * 0.0008;
       var bodyCount = _shufflePhysicsBodies.length;
@@ -18744,8 +18832,10 @@ function _exitShuffleSandbox() {
   _sandboxMouseGrab = null;
   _sandboxMode = 'shuffle';
 
-  // Stop shake detection and reset tilt state
+  // Stop timers, shake detection, and reset tilt state
+  _sandboxStopIdleTimer();
   _sandboxStopShakeDetection();
+  _sandboxTransitioning = false;
   _sandboxTiltDirs = [];
   _sandboxTiltPrevSignX = 0;
   _sandboxTiltPrevSignY = 0;
