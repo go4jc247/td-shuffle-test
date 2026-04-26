@@ -17457,11 +17457,40 @@ function _createShuffleUI(rect) {
     recordBtn.style.cssText = btnStyle + 'background:rgba(220,38,38,0.9);';
     recordBtn.addEventListener('click', function() {
       if (_shuffleRecording) {
-        // Stop recording — append a final scatter + gather, then normalize and save
-        var recT = performance.now() - _shuffleRecordStart;
-        _shuffleRecordData.push({ t: recT + 100, action: 'gather' });
-        _shuffleRecordData.push({ t: recT + 2000, action: 'scatter' });
+        // Stop recording — trim dead spots, append final gather+scatter
         _shuffleRecording = false;
+        // Trim: find first motion point and shift all timestamps
+        var firstMotionT = -1;
+        for (var ti = 0; ti < _shuffleRecordData.length; ti++) {
+          if (!_shuffleRecordData[ti].action && firstMotionT < 0) {
+            firstMotionT = _shuffleRecordData[ti].t;
+            break;
+          }
+        }
+        if (firstMotionT > 100) {
+          var trimOffset = firstMotionT - 100;
+          var trimmed = [];
+          for (var ti = 0; ti < _shuffleRecordData.length; ti++) {
+            var p = _shuffleRecordData[ti];
+            var nt = p.t - trimOffset;
+            if (nt < 0) continue;
+            var np = {};
+            for (var k in p) { if (p.hasOwnProperty(k)) np[k] = p[k]; }
+            np.t = nt;
+            trimmed.push(np);
+          }
+          _shuffleRecordData = trimmed;
+        }
+        // Find last motion point and trim trailing dead actions
+        var lastMotionT = 0;
+        for (var ti = _shuffleRecordData.length - 1; ti >= 0; ti--) {
+          if (!_shuffleRecordData[ti].action) { lastMotionT = _shuffleRecordData[ti].t; break; }
+        }
+        // Remove anything after last motion
+        _shuffleRecordData = _shuffleRecordData.filter(function(p) { return p.t <= lastMotionT; });
+        // Append clean ending
+        _shuffleRecordData.push({ t: lastMotionT + 200, action: 'gather' });
+        _shuffleRecordData.push({ t: lastMotionT + 2200, action: 'scatter' });
         recordBtn.textContent = 'Record';
         recordBtn.style.background = 'rgba(220,38,38,0.9)';
         exportBtn.style.display = '';
