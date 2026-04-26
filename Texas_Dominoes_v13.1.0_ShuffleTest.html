@@ -18821,7 +18821,7 @@ function _patchSandboxTouchHandlers() {
     _mouseDown = false;
     _sandboxResetIdleTimer();
     if (_sandboxMouseGrab) {
-      _trySnapOrEject(_sandboxMouseGrab.body);
+      if (!_sandboxTrySnapToSeat(_sandboxMouseGrab.body)) _trySnapOrEject(_sandboxMouseGrab.body);
       _sandboxReleaseGrab(_sandboxMouseGrab);
       _sandboxMouseGrab = null;
     }
@@ -18831,7 +18831,7 @@ function _patchSandboxTouchHandlers() {
   newOverlay.addEventListener('mouseleave', function() {
     _mouseDown = false;
     if (_sandboxMouseGrab) {
-      _trySnapOrEject(_sandboxMouseGrab.body);
+      if (!_sandboxTrySnapToSeat(_sandboxMouseGrab.body)) _trySnapOrEject(_sandboxMouseGrab.body);
       _sandboxReleaseGrab(_sandboxMouseGrab);
       _sandboxMouseGrab = null;
     }
@@ -18960,7 +18960,7 @@ function _patchSandboxTouchHandlers() {
       // Release pick constraint and try to snap to slot
       if (_sandboxGrabbedTiles[id]) {
         var grab = _sandboxGrabbedTiles[id];
-        _trySnapOrEject(grab.body);
+        if (!_sandboxTrySnapToSeat(grab.body)) _trySnapOrEject(grab.body);
         _sandboxReleaseGrab(grab);
         delete _sandboxGrabbedTiles[id];
       }
@@ -19160,8 +19160,10 @@ function _sandboxAdvanceStage() {
         setTimeout(function() {
           _sandboxStageIdx++;
           _sandboxMode = 'pick';
+          _sandboxSeatTileCounts = {};
           _updateStageLabel();
           _sandboxUpdateHintForStage();
+          _sandboxShowSeatMarkers();
           _sandboxTransitioning = false;
         }, 800);
       }
@@ -19169,8 +19171,10 @@ function _sandboxAdvanceStage() {
   } else {
     // Between pick stages — just advance
     _sandboxStageIdx++;
+    _sandboxSeatTileCounts = {};
     _updateStageLabel();
     _sandboxUpdateHintForStage();
+    _sandboxShowSeatMarkers();
     _sandboxTransitioning = false;
   }
 }
@@ -19179,12 +19183,19 @@ function _sandboxRetreatStage() {
   if (_sandboxTransitioning || _sandboxStageIdx <= 0) return;
   var snap = _sandboxStageSnapshots[_sandboxStageIdx - 1];
   _sandboxStageIdx--;
+  _sandboxSeatTileCounts = {};
+  _sandboxAssignedTiles = {};
   if (snap) _sandboxRestoreTileState(snap);
   var stage = _sandboxGetCurrentStage();
   _sandboxMode = (stage && stage.id === 'shuffle') ? 'shuffle' : 'pick';
   _updateStageLabel();
   _sandboxUpdateHintForStage();
-  if (_sandboxMode === 'shuffle') _sandboxResetIdleTimer();
+  if (_sandboxMode === 'shuffle') {
+    _sandboxHideSeatMarkers();
+    _sandboxResetIdleTimer();
+  } else {
+    _sandboxShowSeatMarkers();
+  }
 }
 
 function _sandboxUpdateHintForStage() {
@@ -19203,6 +19214,181 @@ function _sandboxUpdateHintForStage() {
   } else if (stage.id === 'shufflerPick') {
     hint.textContent = 'Pick your tiles as shuffler';
   }
+}
+
+// ── Seat Markers + Tile-to-Seat Snapping ──
+
+var _sandboxSeatMarkers = []; // DOM elements for seat indicators
+var _sandboxSeatTileCounts = {}; // seat -> count of tiles assigned
+var _sandboxAssignedTiles = {}; // body.id -> seat number
+
+function _sandboxShowSeatMarkers() {
+  _sandboxHideSeatMarkers();
+  var stage = _sandboxGetCurrentStage();
+  if (!stage || !stage.seats) return;
+
+  var tableEl = document.getElementById('tableMain');
+  var cfg = _sandboxGetConfig();
+  var activeSeatSet = {};
+  for (var i = 0; i < stage.seats.length; i++) activeSeatSet[stage.seats[i]] = true;
+
+  for (var seat = 0; seat < cfg.playerCount; seat++) {
+    var playerNum = seatToPlayer(seat);
+    // Get center of hand area (middle slot)
+    var midSlot = Math.floor(cfg.handSize / 2);
+    var pos = (typeof getHandPosition === 'function') ? getHandPosition(playerNum, midSlot) : null;
+    if (!pos) continue;
+
+    var isActive = !!activeSeatSet[seat];
+    var isShuffler = (seat === 0);
+    var team = seat % 2; // 0 = shuffler's team, 1 = opponent
+
+    // Determine label
+    var label = 'S' + (seat + 1);
+    if (isShuffler) label = 'Shuffler';
+    else if (_sandboxGameMode === 'MOON') label = 'Opp ' + seat;
+    else if (team === 0) label = 'Partner';
+    else label = 'Opp ' + Math.ceil(seat / 2);
+
+    var marker = document.createElement('div');
+    marker.className = 'sandboxSeatMarker';
+    marker.dataset.seat = seat;
+    var color = isShuffler ? 'rgba(168,85,247,' : (team === 1 ? 'rgba(239,68,68,' : 'rgba(59,130,246,');
+    var opacity = isActive ? '0.8)' : '0.25)';
+    var bgOpacity = isActive ? '0.15)' : '0.05)';
+    marker.style.cssText = 'position:absolute;z-index:505;pointer-events:none;'
+      + 'left:' + (pos.x + 28) + 'px;top:' + (pos.y + 56) + 'px;'
+      + 'transform:translate(-50%,-50%);'
+      + 'border:2px solid ' + color + opacity + ';'
+      + 'background:' + color + bgOpacity + ';'
+      + 'border-radius:10px;padding:4px 10px;'
+      + 'font-size:10px;font-weight:700;font-family:system-ui,sans-serif;'
+      + 'color:' + color + (isActive ? '0.95)' : '0.4)') + ';'
+      + 'text-align:center;white-space:nowrap;';
+
+    // Label + counter
+    var count = _sandboxSeatTileCounts[seat] || 0;
+    var total = stage.tilesPerSeat || cfg.handSize;
+    marker.innerHTML = '<div>' + label + '</div>'
+      + (isActive ? '<div style="font-size:9px;opacity:0.7;">' + count + '/' + total + '</div>' : '');
+
+    tableEl.appendChild(marker);
+    _sandboxSeatMarkers.push(marker);
+  }
+}
+
+function _sandboxHideSeatMarkers() {
+  for (var i = 0; i < _sandboxSeatMarkers.length; i++) {
+    _sandboxSeatMarkers[i].remove();
+  }
+  _sandboxSeatMarkers = [];
+}
+
+function _sandboxUpdateSeatCounter(seat) {
+  var stage = _sandboxGetCurrentStage();
+  if (!stage) return;
+  var total = stage.tilesPerSeat || _sandboxGetConfig().handSize;
+  for (var i = 0; i < _sandboxSeatMarkers.length; i++) {
+    var m = _sandboxSeatMarkers[i];
+    if (parseInt(m.dataset.seat) === seat) {
+      var countDiv = m.querySelector('div:last-child');
+      if (countDiv) {
+        var count = _sandboxSeatTileCounts[seat] || 0;
+        countDiv.textContent = count + '/' + total;
+        if (count >= total) {
+          countDiv.style.color = 'rgba(34,197,94,0.9)';
+        }
+      }
+      break;
+    }
+  }
+}
+
+// Find which active seat is closest to a position (for snap detection)
+function _sandboxFindNearestSeat(x, y) {
+  var stage = _sandboxGetCurrentStage();
+  if (!stage || !stage.seats) return -1;
+  var cfg = _sandboxGetConfig();
+  var bestSeat = -1, bestDist = Infinity;
+
+  for (var i = 0; i < stage.seats.length; i++) {
+    var seat = stage.seats[i];
+    var total = stage.tilesPerSeat || cfg.handSize;
+    if ((_sandboxSeatTileCounts[seat] || 0) >= total) continue; // seat full
+
+    var playerNum = seatToPlayer(seat);
+    var midSlot = Math.floor(cfg.handSize / 2);
+    var pos = (typeof getHandPosition === 'function') ? getHandPosition(playerNum, midSlot) : null;
+    if (!pos) continue;
+
+    var dx = x - (pos.x + 28);
+    var dy = y - (pos.y + 56);
+    var dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < bestDist) { bestDist = dist; bestSeat = seat; }
+  }
+
+  // Only snap if within reasonable distance (30% of screen height)
+  var rect = getRect();
+  if (bestDist > rect.height * 0.3) return -1;
+  return bestSeat;
+}
+
+// Assign a tile (physics body) to a seat — snap it to the next available hand slot
+function _sandboxAssignTileToSeat(body, seat) {
+  if (_sandboxAssignedTiles[body.id] !== undefined) return; // already assigned
+  var stage = _sandboxGetCurrentStage();
+  var cfg = _sandboxGetConfig();
+  var total = stage.tilesPerSeat || cfg.handSize;
+  var count = _sandboxSeatTileCounts[seat] || 0;
+  if (count >= total) return; // seat full
+
+  var playerNum = seatToPlayer(seat);
+  var slotIdx = count;
+  var pos = (typeof getHandPosition === 'function') ? getHandPosition(playerNum, slotIdx) : null;
+
+  _sandboxAssignedTiles[body.id] = seat;
+  _sandboxSeatTileCounts[seat] = count + 1;
+
+  // Make body static and snap to hand position
+  Matter.Body.setStatic(body, true);
+  if (pos) {
+    Matter.Body.setPosition(body, { x: pos.x + 28, y: pos.y + 56 });
+    Matter.Body.setAngle(body, (pos.rz || 0) * Math.PI / 180);
+  }
+  Matter.Body.setVelocity(body, { x: 0, y: 0 });
+
+  _sandboxUpdateSeatCounter(seat);
+
+  // Check if stage is complete
+  _sandboxCheckStageComplete();
+}
+
+// Check if all active seats have their full tile count
+function _sandboxCheckStageComplete() {
+  var stage = _sandboxGetCurrentStage();
+  if (!stage || !stage.seats) return;
+  var cfg = _sandboxGetConfig();
+  var total = stage.tilesPerSeat || cfg.handSize;
+  for (var i = 0; i < stage.seats.length; i++) {
+    if ((_sandboxSeatTileCounts[stage.seats[i]] || 0) < total) return;
+  }
+  // All seats full — stage complete
+  var hint = document.getElementById('shuffleHint');
+  if (hint) hint.textContent = 'Stage complete! Press > to advance.';
+}
+
+// Try to snap a released body to the nearest seat (called from touch/mouse handlers)
+function _sandboxTrySnapToSeat(body) {
+  if (!body || body.isStatic) return false;
+  var stage = _sandboxGetCurrentStage();
+  if (!stage || stage.id === 'shuffle') return false;
+
+  var seat = _sandboxFindNearestSeat(body.position.x, body.position.y);
+  if (seat >= 0) {
+    _sandboxAssignTileToSeat(body, seat);
+    return true;
+  }
+  return false;
 }
 
 function _sandboxStartShakeDetection() {
@@ -19442,6 +19628,13 @@ function _exitShuffleSandbox() {
   _sandboxGrabbedTiles = {};
   _sandboxMouseGrab = null;
   _sandboxMode = 'shuffle';
+
+  // Clean up seat markers and stage state
+  _sandboxHideSeatMarkers();
+  _sandboxSeatTileCounts = {};
+  _sandboxAssignedTiles = {};
+  _sandboxStageIdx = 0;
+  _sandboxStageSnapshots = [];
 
   // Stop timers, shake detection, and reset tilt state
   _sandboxStopIdleTimer();
