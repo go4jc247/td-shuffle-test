@@ -16589,6 +16589,10 @@ var SHUFFLE_PHYSICS = {
   shakeThreshold: 1.0,
   shakeMaxForce: 1.0,
   tiltMaxAngle: 0.5,
+
+  // ── Playback ──
+  playbackStrength: 1.0,   // multiplier for AI/replay shuffle force (0.1=gentle, 2.0=strong)
+  playbackSpeed: 1.0,      // speed multiplier for playback (0.5=slow, 2.0=fast)
 };
 // Store defaults for Reset button
 var _shufflePhysicsDefaults = JSON.parse(JSON.stringify(SHUFFLE_PHYSICS));
@@ -16661,19 +16665,19 @@ function _playRecording(rec, cx, cy, r, ptr) {
   var SP = SHUFFLE_PHYSICS;
 
   // Random variations so no two playbacks are identical
-  var speedMult = 0.85 + Math.random() * 0.3;       // 0.85x-1.15x
+  var baseSpeed = 0.9 + Math.random() * 0.2;        // slight random ±10%
+  var speedMult = baseSpeed * SP.playbackSpeed;      // user-adjustable
   var mirrorX = Math.random() > 0.5 ? -1 : 1;
   var mirrorY = Math.random() > 0.5 ? -1 : 1;
   var rotAngle = Math.random() * Math.PI * 2;
   var cosR = Math.cos(rotAngle), sinR = Math.sin(rotAngle);
   var jitter = 0.01 + Math.random() * 0.02;
-  var baseStrength = 0.85 + Math.random() * 0.3;
+  var baseStrength = 0.9 + Math.random() * 0.2;     // slight random ±10%
 
-  // Recordings were captured with the current default grab settings.
-  // Scale velocity if settings have been changed from defaults so playback still matches.
-  var refGrabStrength = _shufflePhysicsDefaults.grabStrength; // what recordings were made with
+  // User-adjustable playback force + auto-scale if grab settings changed
+  var refGrabStrength = _shufflePhysicsDefaults.grabStrength;
   var velScale = refGrabStrength / Math.max(SP.grabStrength, 0.005);
-  var strengthMult = baseStrength * velScale;
+  var strengthMult = baseStrength * velScale * SP.playbackStrength;
 
   var playTimer = setInterval(function() {
     if (!_shufflePhysicsActive) { clearInterval(playTimer); return; }
@@ -17609,6 +17613,11 @@ function _createShuffleSettingsPanel(tableEl) {
   slider('Tilt Max Angle', 'tiltMaxAngle', 0.5, 6.0, 0.5, 1);
   slider('Shake Threshold', 'shakeThreshold', 1.0, 15, 0.5, 1);
   slider('Shake Max Force', 'shakeMaxForce', 1.0, 15, 0.5, 1);
+
+  // ── Playback ──
+  section('Playback (AI/Replay)');
+  slider('Playback Strength', 'playbackStrength', 0.05, 3.0, 0.05, 2);
+  slider('Playback Speed', 'playbackSpeed', 0.3, 2.0, 0.1, 1);
 
   // ── Save / Load ──
   section('Save / Load');
