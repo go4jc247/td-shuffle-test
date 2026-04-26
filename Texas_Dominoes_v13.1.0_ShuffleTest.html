@@ -16686,7 +16686,7 @@ function _playRecording(rec, cx, cy, r, ptr) {
   }
 
   var playTimer = setInterval(function() {
-    if (!_shufflePhysicsActive) { clearInterval(playTimer); if (ghostEl) ghostEl.remove(); return; }
+    if (!_shufflePhysicsActive) { clearInterval(playTimer); delete _shuffleTouchPointers['_playback']; if (ghostEl) ghostEl.remove(); return; }
     var now = (performance.now() - startTime) * speedMult;
 
     while (idx < points.length - 1 && points[idx + 1].t <= now) idx++;
@@ -16694,6 +16694,7 @@ function _playRecording(rec, cx, cy, r, ptr) {
     if (idx >= points.length - 1) {
       clearInterval(playTimer);
       ptr.active = false;
+      delete _shuffleTouchPointers['_playback'];
       if (ghostEl) ghostEl.remove();
       // In sandbox mode, just stop — don't tear down physics
       if (!_shuffleSandboxActive) {
@@ -16748,8 +16749,18 @@ function _playRecording(rec, cx, cy, r, ptr) {
     ptr.active = true;
     ptr._isTouch = true; // use touch path (single force point, no mirror)
 
-    // Update ghost finger position
+    // Set recorded grab radius via a fake touch pointer so force uses correct area
+    var recGrabR = p0.grabR || 0;
+    _shuffleTouchPointers['_playback'] = {
+      x: ptr.x, y: ptr.y, vx: ptr.vx, vy: ptr.vy,
+      px: ptr.x, py: ptr.y, grabR: recGrabR
+    };
+
+    // Update ghost finger position and size
     if (ghostEl) {
+      var ghostR = recGrabR > 0 ? recGrabR : SHUFFLE_PHYSICS.grabRadius;
+      ghostEl.style.width = (ghostR * 2) + 'px';
+      ghostEl.style.height = (ghostR * 2) + 'px';
       ghostEl.style.display = '';
       ghostEl.style.left = ptr.x + 'px';
       ghostEl.style.top = ptr.y + 'px';
@@ -17120,17 +17131,22 @@ function _shufflePhysicsLoop() {
     }
   }
 
-  // Record pointer data if recording (all active force points)
+  // Record pointer data if recording (all active force points + grab radius)
   if (_shuffleRecording && ptr.active) {
     var recT = performance.now() - _shuffleRecordStart;
-    // Record primary pointer
-    _shuffleRecordData.push({ t: recT, x: ptr.x, y: ptr.y, vx: ptr.vx, vy: ptr.vy });
-    // Record additional touch pointers (finger 2+)
+    // Get grab radius from first touch pointer if available
+    var recGrabR = 0;
     if (ptr._isTouch) {
       var tkeys = Object.keys(_shuffleTouchPointers);
+      if (tkeys.length > 0) recGrabR = _shuffleTouchPointers[tkeys[0]].grabR || 0;
+    }
+    // Record primary pointer with grab radius
+    _shuffleRecordData.push({ t: recT, x: ptr.x, y: ptr.y, vx: ptr.vx, vy: ptr.vy, grabR: recGrabR });
+    // Record additional touch pointers (finger 2+)
+    if (ptr._isTouch) {
       for (var tk = 1; tk < tkeys.length; tk++) {
         var tp = _shuffleTouchPointers[tkeys[tk]];
-        _shuffleRecordData.push({ t: recT, x: tp.x, y: tp.y, vx: tp.vx, vy: tp.vy });
+        _shuffleRecordData.push({ t: recT, x: tp.x, y: tp.y, vx: tp.vx, vy: tp.vy, grabR: tp.grabR || 0 });
       }
     }
   }
@@ -17283,13 +17299,15 @@ function _createShuffleUI(rect) {
             if (pt.action) {
               return { t: Math.round(pt.t), action: pt.action };
             }
-            return {
+            var o = {
               t: Math.round(pt.t),
               x: +((pt.x - ac.x) / ac.r).toFixed(4),
               y: +((pt.y - ac.y) / ac.r).toFixed(4),
               vx: +(pt.vx / ac.r).toFixed(4),
               vy: +(pt.vy / ac.r).toFixed(4)
             };
+            if (pt.grabR > 0) o.grabR = Math.round(pt.grabR);
+            return o;
           });
           var recording = { points: normalized, duration: normalized[normalized.length - 1].t, ts: Date.now() };
           _shuffleExportedRecordings.push(recording);
@@ -17327,13 +17345,15 @@ function _createShuffleUI(rect) {
         if (pt.action) {
           return { t: Math.round(pt.t), action: pt.action };
         }
-        return {
+        var o = {
           t: Math.round(pt.t),
           x: +((pt.x - ac.x) / ac.r).toFixed(4),
           y: +((pt.y - ac.y) / ac.r).toFixed(4),
           vx: +(pt.vx / ac.r).toFixed(4),
           vy: +(pt.vy / ac.r).toFixed(4)
         };
+        if (pt.grabR > 0) o.grabR = Math.round(pt.grabR);
+        return o;
       });
       var recording = { points: normalized, duration: normalized[normalized.length - 1].t, ts: Date.now() };
 
