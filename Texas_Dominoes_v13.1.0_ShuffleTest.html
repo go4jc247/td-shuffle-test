@@ -16691,14 +16691,15 @@ function _playRecording(rec, cx, cy, r, ptr) {
     }
     var now = (performance.now() - startTime) * speedMult;
 
+    var prevIdx = idx;
     while (idx < points.length - 1 && points[idx + 1].t <= now) idx++;
 
-    // Handle action events (gather, scatter, up) BEFORE end check
-    var p = points[idx];
-    if (p.action && !p._played) {
+    // Process ALL action events from prevIdx to idx (handles same-timestamp events)
+    for (var ai = prevIdx; ai <= idx; ai++) {
+      var p = points[ai];
+      if (!p.action || p._played) continue;
       p._played = true;
       if (p.action === 'up') {
-        // Finger lifted — remove its touch pointer and ghost, mark as lifted
         var upFid = p.f !== undefined ? p.f : 0;
         _pbLiftedFingers[upFid] = p.t;
         var upKey = '_pb' + upFid;
