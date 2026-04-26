@@ -17441,7 +17441,10 @@ function _createShuffleUI(rect) {
     recordBtn.style.cssText = btnStyle + 'background:rgba(220,38,38,0.9);';
     recordBtn.addEventListener('click', function() {
       if (_shuffleRecording) {
-        // Stop recording — immediately normalize and save for Replay
+        // Stop recording — append a final scatter + gather, then normalize and save
+        var recT = performance.now() - _shuffleRecordStart;
+        _shuffleRecordData.push({ t: recT + 100, action: 'gather' });
+        _shuffleRecordData.push({ t: recT + 2000, action: 'scatter' });
         _shuffleRecording = false;
         recordBtn.textContent = 'Record';
         recordBtn.style.background = 'rgba(220,38,38,0.9)';
