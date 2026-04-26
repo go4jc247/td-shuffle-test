@@ -16722,7 +16722,13 @@ function _playRecording(rec, cx, cy, r, ptr) {
     var p = points[idx];
     if (p.action && !p._played) {
       p._played = true;
-      if (p.action === 'gather') {
+      if (p.action === 'up') {
+        // Finger lifted — remove its touch pointer and ghost
+        var upKey = '_pb' + (p.f !== undefined ? p.f : 0);
+        delete _shuffleTouchPointers[upKey];
+        var upGhost = document.getElementById('playbackGhost' + (p.f !== undefined ? p.f : 0));
+        if (upGhost) upGhost.remove();
+      } else if (p.action === 'gather') {
         _shuffleGatherActive = true;
         _shuffleGatherStartTime = performance.now();
       } else if (p.action === 'ungather') {
@@ -17499,7 +17505,9 @@ function _createShuffleUI(rect) {
           var ac = _shuffleAreaCenter;
           var normalized = _shuffleRecordData.map(function(pt) {
             if (pt.action) {
-              return { t: Math.round(pt.t), action: pt.action };
+              var ap = { t: Math.round(pt.t), action: pt.action };
+              if (pt.f !== undefined) ap.f = pt.f;
+              return ap;
             }
             var o = {
               t: Math.round(pt.t),
@@ -17752,6 +17760,16 @@ function _createShuffleUI(rect) {
   }, { passive: false });
   overlay.addEventListener('touchend', function(e) {
     e.preventDefault();
+    // Record finger-up events
+    if (_shuffleRecording) {
+      var recT = performance.now() - _shuffleRecordStart;
+      var tkeys = Object.keys(_shuffleTouchPointers);
+      for (var ti = 0; ti < e.changedTouches.length; ti++) {
+        var tid = e.changedTouches[ti].identifier;
+        var fIdx = tkeys.indexOf('' + tid);
+        if (fIdx >= 0) _shuffleRecordData.push({ t: recT, f: fIdx, action: 'up' });
+      }
+    }
     for (var ti = 0; ti < e.changedTouches.length; ti++) {
       delete _shuffleTouchPointers[e.changedTouches[ti].identifier];
     }
@@ -18836,6 +18854,16 @@ function _patchSandboxTouchHandlers() {
   newOverlay.addEventListener('touchend', function(e) {
     e.preventDefault();
     _sandboxResetIdleTimer();
+    // Record finger-up events
+    if (_shuffleRecording) {
+      var recT = performance.now() - _shuffleRecordStart;
+      var tkeys = Object.keys(_shuffleTouchPointers);
+      for (var ti = 0; ti < e.changedTouches.length; ti++) {
+        var tid = e.changedTouches[ti].identifier;
+        var fIdx = tkeys.indexOf('' + tid);
+        if (fIdx >= 0) _shuffleRecordData.push({ t: recT, f: fIdx, action: 'up' });
+      }
+    }
     for (var ti = 0; ti < e.changedTouches.length; ti++) {
       var id = e.changedTouches[ti].identifier;
       // Release pick constraint and try to snap to slot
