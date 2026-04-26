@@ -16675,6 +16675,7 @@ function _playRecording(rec, cx, cy, r, ptr) {
   // Faithful playback — no random mirror/rotation so it matches what was recorded
   var speedMult = SP.playbackSpeed;
   var strengthMult = SP.playbackStrength;
+  var _pbWasMoving = false; // track moving→stopped transitions for idle timer
 
   // Ghost finger indicator (created dynamically per finger during playback)
   var ghostEl = SP.playbackShowFinger ? true : null; // flag to enable ghost creation
@@ -16792,15 +16793,30 @@ function _playRecording(rec, cx, cy, r, ptr) {
     ptr.x = first.x; ptr.y = first.y;
     ptr.vx = first.vx; ptr.vy = first.vy;
 
-    // Reset idle timer only when there's real motion — same as live touch.
-    // When playback pointer pauses, idle timer fires gather naturally.
+    // Mirror live touch behavior for idle timer:
+    // Only reset on the transition from stopped→moving (like touchstart).
+    // When fingers stop, let the idle timer fire naturally (like touchend).
     var maxSpd = 0;
     for (var fk = 0; fk < fingerKeys.length; fk++) {
       var fd2 = fingerData[fingerKeys[fk]];
       var s = Math.hypot(fd2.vx, fd2.vy);
       if (s > maxSpd) maxSpd = s;
     }
-    if (maxSpd > 2.0 && _shuffleSandboxActive) _sandboxResetIdleTimer();
+    var isMoving = maxSpd > 2.0;
+    if (isMoving && !_pbWasMoving && _shuffleSandboxActive) {
+      // Transition: stopped → moving — reset idle timer (cancels gather, starts new countdown)
+      _sandboxResetIdleTimer();
+    } else if (!isMoving && _pbWasMoving && _shuffleSandboxActive) {
+      // Transition: moving → stopped — just restart the idle countdown (don't cancel active gather)
+      if (_sandboxIdleTimer) { clearTimeout(_sandboxIdleTimer); _sandboxIdleTimer = null; }
+      _sandboxIdleTimer = setTimeout(function() {
+        if (_shuffleSandboxActive && _sandboxMode === 'shuffle' && _shufflePhysicsActive) {
+          _shuffleGatherActive = true;
+          _shuffleGatherStartTime = performance.now();
+        }
+      }, SHUFFLE_PHYSICS.autoGatherDelay);
+    }
+    _pbWasMoving = isMoving;
 
     // Update ghost finger(s)
     if (ghostEl) {
