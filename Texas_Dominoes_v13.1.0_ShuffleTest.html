@@ -16670,8 +16670,6 @@ function _playRecording(rec, cx, cy, r, ptr) {
   var idx = 0;
   var startTime = performance.now();
   _sandboxPlaybackActive = true;
-  // Disable auto-gather during playback
-  _sandboxStopIdleTimer();
   var SP = SHUFFLE_PHYSICS;
 
   // Faithful playback — no random mirror/rotation so it matches what was recorded
@@ -16756,6 +16754,10 @@ function _playRecording(rec, cx, cy, r, ptr) {
     ptr.vy = ivy * r * strengthMult;
     ptr.active = true;
     ptr._isTouch = true; // use touch path (single force point, no mirror)
+
+    // Reset idle timer when pointer is moving (just like a real finger)
+    var spd = Math.hypot(ptr.vx, ptr.vy);
+    if (spd > 0.5 && _shuffleSandboxActive) _sandboxResetIdleTimer();
 
     // Set recorded grab radius via a fake touch pointer so force uses correct area
     var recGrabR = p0.grabR || 0;
@@ -17261,12 +17263,13 @@ function _createShuffleUI(rect) {
     });
     btnBar.appendChild(scatterBtn);
 
-    // Replay button — plays back a random recorded AI shuffle
+    // Replay button — cycles through recordings, long-press to pick
     var replayBtn = document.createElement('button');
     replayBtn.textContent = 'Replay';
     replayBtn.style.cssText = btnStyle + 'background:rgba(14,165,233,0.9);';
-    replayBtn.addEventListener('click', function() {
-      // Check all sources: bundled, in-memory exports, and localStorage
+    var _replayIdx = -1; // which recording to play next (-1 = last)
+
+    function _getAllRecs() {
       var allRecs = _shuffleRecordings.slice();
       if (_shuffleExportedRecordings.length > 0) {
         allRecs = allRecs.concat(_shuffleExportedRecordings);
@@ -17276,20 +17279,92 @@ function _createShuffleUI(rect) {
           if (sr) allRecs = allRecs.concat(JSON.parse(sr));
         } catch(e) {}
       }
+      return allRecs;
+    }
+
+    function _updateReplayLabel() {
+      var allRecs = _getAllRecs();
+      if (allRecs.length === 0) {
+        replayBtn.textContent = 'Replay';
+      } else {
+        var idx = _replayIdx >= 0 ? _replayIdx % allRecs.length : allRecs.length - 1;
+        replayBtn.textContent = 'Replay ' + (idx + 1) + '/' + allRecs.length;
+      }
+    }
+
+    replayBtn.addEventListener('click', function() {
+      if (_sandboxPlaybackActive) return;
+      var allRecs = _getAllRecs();
       if (allRecs.length === 0) {
         replayBtn.textContent = 'No recordings';
-        setTimeout(function() { replayBtn.textContent = 'Replay'; }, 1500);
+        setTimeout(_updateReplayLabel, 1500);
         return;
       }
+      var idx = _replayIdx >= 0 ? _replayIdx % allRecs.length : allRecs.length - 1;
+      var rec = allRecs[idx];
       var ac = _shuffleAreaCenter;
-      // Play the most recent recording
-      var rec = allRecs[allRecs.length - 1];
       _playRecording(rec, ac.x, ac.y, ac.r, _shufflePhysicsPointer);
-      replayBtn.textContent = 'Playing...';
+      replayBtn.textContent = 'Playing ' + (idx + 1) + '/' + allRecs.length + '...';
       var dur = rec.duration || 15000;
-      setTimeout(function() { replayBtn.textContent = 'Replay'; }, dur + 500);
+      setTimeout(_updateReplayLabel, dur + 500);
+      // Cycle to next recording for next tap
+      _replayIdx = (idx + 1) % allRecs.length;
     });
     btnBar.appendChild(replayBtn);
+
+    // Prev/Next buttons to pick which recording
+    var prevRecBtn = document.createElement('button');
+    prevRecBtn.textContent = '<';
+    prevRecBtn.style.cssText = btnStyle + 'background:rgba(14,165,233,0.6);padding:8px 10px;font-size:11px;';
+    prevRecBtn.addEventListener('click', function() {
+      var allRecs = _getAllRecs();
+      if (allRecs.length === 0) return;
+      if (_replayIdx < 0) _replayIdx = allRecs.length - 1;
+      _replayIdx = (_replayIdx - 1 + allRecs.length) % allRecs.length;
+      _updateReplayLabel();
+    });
+    btnBar.appendChild(prevRecBtn);
+
+    var nextRecBtn = document.createElement('button');
+    nextRecBtn.textContent = '>';
+    nextRecBtn.style.cssText = btnStyle + 'background:rgba(14,165,233,0.6);padding:8px 10px;font-size:11px;';
+    nextRecBtn.addEventListener('click', function() {
+      var allRecs = _getAllRecs();
+      if (allRecs.length === 0) return;
+      if (_replayIdx < 0) _replayIdx = 0;
+      _replayIdx = (_replayIdx + 1) % allRecs.length;
+      _updateReplayLabel();
+    });
+    btnBar.appendChild(nextRecBtn);
+
+    // Delete current recording button
+    var delRecBtn = document.createElement('button');
+    delRecBtn.textContent = 'Del';
+    delRecBtn.style.cssText = btnStyle + 'background:rgba(239,68,68,0.6);padding:8px 10px;font-size:11px;';
+    delRecBtn.addEventListener('click', function() {
+      var allRecs = _getAllRecs();
+      if (allRecs.length === 0) return;
+      var idx = _replayIdx >= 0 ? _replayIdx % allRecs.length : allRecs.length - 1;
+
+      // Determine which source the recording is in and remove it
+      var bundledLen = _shuffleRecordings.length;
+      if (idx < bundledLen) {
+        _shuffleRecordings.splice(idx, 1);
+      } else {
+        var expIdx = idx - bundledLen;
+        _shuffleExportedRecordings.splice(expIdx, 1);
+        // Also update localStorage
+        try { localStorage.setItem('shuffleRecordings', JSON.stringify(_shuffleExportedRecordings)); } catch(e) {}
+      }
+      // Fix index
+      var remaining = _getAllRecs();
+      if (remaining.length === 0) { _replayIdx = -1; }
+      else if (_replayIdx >= remaining.length) { _replayIdx = remaining.length - 1; }
+      _updateReplayLabel();
+      var countEl = document.getElementById('shuffleRecCount');
+      if (countEl) countEl.textContent = remaining.length + ' shuffle recording' + (remaining.length !== 1 ? 's' : '') + ' saved';
+    });
+    btnBar.appendChild(delRecBtn);
 
     // Record button
     var recordBtn = document.createElement('button');
@@ -18686,10 +18761,10 @@ function _sandboxResetIdleTimer() {
       _shuffleRecordData.push({ t: recT, action: 'ungather' });
     }
   }
-  // Start new idle timer (disabled during playback)
-  if (_shuffleSandboxActive && _sandboxMode === 'shuffle' && !_sandboxTransitioning && !_sandboxPlaybackActive) {
+  // Start new idle timer
+  if (_shuffleSandboxActive && _sandboxMode === 'shuffle' && !_sandboxTransitioning) {
     _sandboxIdleTimer = setTimeout(function() {
-      if (_shuffleSandboxActive && _sandboxMode === 'shuffle' && _shufflePhysicsActive && !_sandboxPlaybackActive) {
+      if (_shuffleSandboxActive && _sandboxMode === 'shuffle' && _shufflePhysicsActive) {
         _shuffleGatherActive = true;
         _shuffleGatherStartTime = performance.now();
         // Record auto-gather event
