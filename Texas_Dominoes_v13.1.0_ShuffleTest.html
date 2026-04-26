@@ -18243,6 +18243,43 @@ var _sandboxHandSize = 7; // number of pick slots
 var _sandboxMinSlots = 1;
 var _sandboxMaxSlots = 14;
 
+// ── Sandbox Stage System ──
+var _sandboxGameMode = 'T42'; // 'TN51' | 'T42' | 'MOON'
+var _sandboxStageIdx = 0;
+var _sandboxStageSnapshots = []; // tile position snapshots for undo
+
+var SANDBOX_GAME_CONFIGS = {
+  TN51: { playerCount: 6, maxPip: 7, handSize: 6, tileCount: 36 },
+  T42:  { playerCount: 4, maxPip: 6, handSize: 7, tileCount: 28 },
+  MOON: { playerCount: 3, maxPip: 6, handSize: 7, tileCount: 22 }
+};
+
+// Stage definitions per game mode — shuffler is always seat 0
+var SANDBOX_STAGES = {
+  TN51: [
+    { id: 'shuffle', label: 'Shuffle' },
+    { id: 'opponentPick', label: 'Opponents Pick', seats: [1,3,5], tilesPerSeat: 6 },
+    { id: 'partnerPick', label: 'Partners Pick', seats: [2,4], tilesPerSeat: 6 },
+    { id: 'shufflerDeal', label: 'Shuffler Gets Rest', seats: [0], tilesPerSeat: 6, autoSweep: true }
+  ],
+  T42: [
+    { id: 'shuffle', label: 'Shuffle' },
+    { id: 'opponentPick', label: 'Opponents Pick', seats: [1,3], tilesPerSeat: 7 },
+    { id: 'partnerPick', label: 'Partner Picks', seats: [2], tilesPerSeat: 7 },
+    { id: 'shufflerDeal', label: 'Shuffler Gets Rest', seats: [0], tilesPerSeat: 7, autoSweep: true }
+  ],
+  MOON: [
+    { id: 'shuffle', label: 'Shuffle' },
+    { id: 'opponentPick', label: 'Opponents Pick', seats: [1,2], tilesPerSeat: 7 },
+    { id: 'shufflerPick', label: 'Shuffler Picks', seats: [0], tilesPerSeat: 7 },
+    // 1 tile left = widow (automatic)
+  ]
+};
+
+function _sandboxGetStages() { return SANDBOX_STAGES[_sandboxGameMode] || SANDBOX_STAGES.T42; }
+function _sandboxGetConfig() { return SANDBOX_GAME_CONFIGS[_sandboxGameMode] || SANDBOX_GAME_CONFIGS.T42; }
+function _sandboxGetCurrentStage() { return _sandboxGetStages()[_sandboxStageIdx] || null; }
+
 // Find the closest physics body to a point, within maxDist pixels
 function _sandboxFindBodyAt(x, y, maxDist) {
   var best = null, bestD2 = maxDist * maxDist;
@@ -18310,8 +18347,11 @@ function _enterShuffleSandbox() {
   shadowLayer.innerHTML = '';
   sprites.length = 0;
 
-  // Generate all 28 tiles (double-6 set) and create real sprites
-  var tiles = allDominoesForSet(6);
+  // Generate tiles based on game mode
+  var cfg = _sandboxGetConfig();
+  var tiles = (_sandboxGameMode === 'MOON') ? moonDominoesForSet() : allDominoesForSet(cfg.maxPip);
+  _sandboxStageIdx = 0;
+  _sandboxStageSnapshots = [];
   var SP = SHUFFLE_PHYSICS;
   var rect = getRect();
   var W = rect.width, H = rect.height;
@@ -18388,26 +18428,51 @@ function _startShuffleSandbox() {
       b.style.cssText = cBtnStyle + 'background:' + bg + ';';
     }
 
-    // Add mode toggle button
-    var modeBtn = document.createElement('button');
-    modeBtn.id = 'sandboxModeBtn';
-    modeBtn.textContent = 'Shuffle';
-    modeBtn.style.cssText = cBtnStyle + 'background:rgba(59,130,246,0.9);';
-    modeBtn.addEventListener('click', function() {
-      if (_sandboxTransitioning) return; // ignore clicks during transition
-      if (_sandboxMode === 'shuffle') {
-        // Transition: gather → scatter → pick
-        _sandboxTransitionToPick(modeBtn);
-      } else {
-        _sandboxMode = 'shuffle';
-        modeBtn.textContent = 'Shuffle';
-        modeBtn.style.background = 'rgba(59,130,246,0.9)';
-        var hint = document.getElementById('shuffleHint');
-        if (hint) hint.textContent = 'Shuffle — swipe over tiles to push them';
-        _sandboxResetIdleTimer();
-      }
+    // Game mode selector
+    var gameModeBtn = document.createElement('button');
+    gameModeBtn.id = 'sandboxGameModeBtn';
+    gameModeBtn.textContent = _sandboxGameMode;
+    gameModeBtn.style.cssText = cBtnStyle + 'background:rgba(139,92,246,0.9);';
+    gameModeBtn.addEventListener('click', function() {
+      if (_sandboxTransitioning) return;
+      var modes = ['T42', 'TN51', 'MOON'];
+      var idx = modes.indexOf(_sandboxGameMode);
+      _sandboxGameMode = modes[(idx + 1) % modes.length];
+      gameModeBtn.textContent = _sandboxGameMode;
+      // Restart sandbox with new tile count
+      _exitShuffleSandbox();
+      _enterShuffleSandbox();
     });
-    btnBar.appendChild(modeBtn);
+    btnBar.appendChild(gameModeBtn);
+
+    // Prev stage button
+    var prevStageBtn = document.createElement('button');
+    prevStageBtn.textContent = '<';
+    prevStageBtn.style.cssText = cBtnStyle + 'background:rgba(100,100,100,0.6);padding:6px 10px;';
+    prevStageBtn.addEventListener('click', function() {
+      if (_sandboxTransitioning || _sandboxStageIdx <= 0) return;
+      _sandboxRetreatStage();
+    });
+    btnBar.appendChild(prevStageBtn);
+
+    // Stage indicator
+    var stageLabel = document.createElement('span');
+    stageLabel.id = 'sandboxStageLabel';
+    stageLabel.style.cssText = 'color:#fff;font-size:11px;font-weight:700;font-family:system-ui,sans-serif;white-space:nowrap;flex-shrink:0;padding:4px 10px;border-radius:6px;background:rgba(59,130,246,0.5);';
+    _updateStageLabel(stageLabel);
+    btnBar.appendChild(stageLabel);
+
+    // Next stage button
+    var nextStageBtn = document.createElement('button');
+    nextStageBtn.textContent = '>';
+    nextStageBtn.style.cssText = cBtnStyle + 'background:rgba(34,197,94,0.7);padding:6px 10px;';
+    nextStageBtn.addEventListener('click', function() {
+      if (_sandboxTransitioning) return;
+      var stages = _sandboxGetStages();
+      if (_sandboxStageIdx >= stages.length - 1) return;
+      _sandboxAdvanceStage();
+    });
+    btnBar.appendChild(nextStageBtn);
 
     // Add motion toggle button
     var motionBtn = document.createElement('button');
@@ -18437,10 +18502,11 @@ function _startShuffleSandbox() {
   var hint = document.getElementById('shuffleHint');
   if (hint) {
     hint.style.top = '42px';
-    hint.textContent = 'Shuffle — swipe over tiles to push them';
   }
+  _sandboxUpdateHintForStage();
 
-  // ── Create pick slots at bottom (always visible) ──
+  // ���─ Create pick slots at bottom (always visible) ──
+  _sandboxHandSize = _sandboxGetConfig().handSize;
   _createPickSlots();
   _showPickSlots();
 
@@ -19008,6 +19074,135 @@ function _sandboxTransitionToPick(modeBtn) {
       }, 800);
     }
   }, 100);
+}
+
+// ── Stage Navigation ──
+
+function _updateStageLabel(labelEl) {
+  if (!labelEl) labelEl = document.getElementById('sandboxStageLabel');
+  if (!labelEl) return;
+  var stages = _sandboxGetStages();
+  var stage = stages[_sandboxStageIdx];
+  var colors = { shuffle: 'rgba(59,130,246,0.5)', opponentPick: 'rgba(234,179,8,0.5)',
+    partnerPick: 'rgba(34,197,94,0.5)', shufflerDeal: 'rgba(168,85,247,0.5)',
+    shufflerPick: 'rgba(234,179,8,0.5)' };
+  labelEl.textContent = (_sandboxStageIdx + 1) + '/' + stages.length + ': ' + (stage ? stage.label : '?');
+  labelEl.style.background = (stage && colors[stage.id]) || 'rgba(100,100,100,0.5)';
+}
+
+function _sandboxSnapshotTileState() {
+  var snap = { stageIdx: _sandboxStageIdx, bodies: [] };
+  for (var i = 0; i < _shufflePhysicsBodies.length; i++) {
+    var b = _shufflePhysicsBodies[i];
+    snap.bodies.push({
+      x: b.position.x, y: b.position.y, angle: b.angle,
+      vx: b.velocity.x, vy: b.velocity.y,
+      isStatic: b.isStatic
+    });
+  }
+  return snap;
+}
+
+function _sandboxRestoreTileState(snap) {
+  for (var i = 0; i < _shufflePhysicsBodies.length && i < snap.bodies.length; i++) {
+    var b = _shufflePhysicsBodies[i];
+    var s = snap.bodies[i];
+    if (b.isStatic && !s.isStatic) Matter.Body.setStatic(b, false);
+    else if (!b.isStatic && s.isStatic) Matter.Body.setStatic(b, true);
+    Matter.Body.setPosition(b, { x: s.x, y: s.y });
+    Matter.Body.setAngle(b, s.angle);
+    Matter.Body.setVelocity(b, { x: s.vx, y: s.vy });
+  }
+}
+
+function _sandboxAdvanceStage() {
+  if (_sandboxTransitioning) return;
+  var stages = _sandboxGetStages();
+  if (_sandboxStageIdx >= stages.length - 1) return;
+
+  _sandboxTransitioning = true;
+  _sandboxStopIdleTimer();
+
+  // Save snapshot before transitioning
+  _sandboxStageSnapshots[_sandboxStageIdx] = _sandboxSnapshotTileState();
+
+  var currentStage = stages[_sandboxStageIdx];
+  var nextStage = stages[_sandboxStageIdx + 1];
+
+  // If leaving shuffle stage, do gather → scatter → transition
+  if (currentStage.id === 'shuffle') {
+    _shuffleGatherActive = true;
+    _shuffleGatherStartTime = performance.now();
+    var hint = document.getElementById('shuffleHint');
+    if (hint) hint.textContent = 'Gathering tiles...';
+
+    var checkSettle = setInterval(function() {
+      if (!_shuffleSandboxActive) { clearInterval(checkSettle); _sandboxTransitioning = false; return; }
+      var totalSpeed = 0;
+      for (var i = 0; i < _shufflePhysicsBodies.length; i++) {
+        totalSpeed += Math.abs(_shufflePhysicsBodies[i].velocity.x) + Math.abs(_shufflePhysicsBodies[i].velocity.y);
+      }
+      var avgSpeed = totalSpeed / (_shufflePhysicsBodies.length || 1);
+      if (!_shuffleGatherActive || avgSpeed < 1.0) {
+        clearInterval(checkSettle);
+        _shuffleGatherActive = false;
+        if (hint) hint.textContent = 'Spreading tiles...';
+        var SP = SHUFFLE_PHYSICS;
+        for (var i = 0; i < _shufflePhysicsBodies.length; i++) {
+          var b = _shufflePhysicsBodies[i];
+          if (b.isStatic) continue;
+          Matter.Body.setVelocity(b, {
+            x: (Math.random() - 0.5) * SP.scatterForce * 80,
+            y: (Math.random() - 0.5) * SP.scatterForce * 80
+          });
+          Matter.Body.setAngularVelocity(b, (Math.random() - 0.5) * SP.scatterSpin);
+        }
+        setTimeout(function() {
+          _sandboxStageIdx++;
+          _sandboxMode = 'pick';
+          _updateStageLabel();
+          _sandboxUpdateHintForStage();
+          _sandboxTransitioning = false;
+        }, 800);
+      }
+    }, 100);
+  } else {
+    // Between pick stages — just advance
+    _sandboxStageIdx++;
+    _updateStageLabel();
+    _sandboxUpdateHintForStage();
+    _sandboxTransitioning = false;
+  }
+}
+
+function _sandboxRetreatStage() {
+  if (_sandboxTransitioning || _sandboxStageIdx <= 0) return;
+  var snap = _sandboxStageSnapshots[_sandboxStageIdx - 1];
+  _sandboxStageIdx--;
+  if (snap) _sandboxRestoreTileState(snap);
+  var stage = _sandboxGetCurrentStage();
+  _sandboxMode = (stage && stage.id === 'shuffle') ? 'shuffle' : 'pick';
+  _updateStageLabel();
+  _sandboxUpdateHintForStage();
+  if (_sandboxMode === 'shuffle') _sandboxResetIdleTimer();
+}
+
+function _sandboxUpdateHintForStage() {
+  var hint = document.getElementById('shuffleHint');
+  if (!hint) return;
+  var stage = _sandboxGetCurrentStage();
+  if (!stage) return;
+  if (stage.id === 'shuffle') {
+    hint.textContent = 'Shuffle — swipe over tiles to push them';
+  } else if (stage.id === 'opponentPick') {
+    hint.textContent = 'Act out opponents picking — drag tiles toward opponent seats';
+  } else if (stage.id === 'partnerPick') {
+    hint.textContent = 'Act out partner picking — drag tiles toward partner seat(s)';
+  } else if (stage.id === 'shufflerDeal') {
+    hint.textContent = 'Sweep remaining tiles to shuffler (you)';
+  } else if (stage.id === 'shufflerPick') {
+    hint.textContent = 'Pick your tiles as shuffler';
+  }
 }
 
 function _sandboxStartShakeDetection() {
