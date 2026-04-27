@@ -17322,11 +17322,26 @@ function _createShuffleUI(rect) {
 
   var btnStyle = 'color:#fff;border:none;padding:8px 18px;border-radius:8px;font-size:13px;font-weight:700;font-family:system-ui,sans-serif;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,0.4);';
 
-  // V13.1: Hide interactive buttons when AI is shuffling
+  // V13.1: Show buttons only when player is shuffling
+  // In sandbox, full button set is added by _startShuffleSandbox
+  // In real game, just a simple Done button + auto-advance on idle
   var _showPlayerButtons = isPlayerShuffling;
+  var _isSandbox = _shuffleSandboxActive;
 
-  if (_showPlayerButtons) {
-    // Gather button
+  if (_showPlayerButtons && !_isSandbox) {
+    // Real game: simple Done button only
+    var doneBtn = document.createElement('button');
+    doneBtn.textContent = 'Done Shuffling';
+    doneBtn.style.cssText = btnStyle + 'background:rgba(34,197,94,0.9);';
+    doneBtn.addEventListener('click', function() {
+      _endShufflePhysics();
+    });
+    btnBar.appendChild(doneBtn);
+  }
+
+  if (_showPlayerButtons && _isSandbox) {
+    // Sandbox: full button set (Gather, Scatter, etc.) — added by _startShuffleSandbox
+    // Just add Gather button here for the sandbox to restyle
     var gatherBtn = document.createElement('button');
     gatherBtn.textContent = 'Gather';
     gatherBtn.style.cssText = btnStyle + 'background:rgba(59,130,246,0.9);';
@@ -17649,28 +17664,30 @@ function _createShuffleUI(rect) {
       importBtn.style.display = exportBtn.style.display;
     }, 200);
 
-    // Done button
+    // Done button (sandbox only — removed by _startShuffleSandbox anyway)
     var doneBtn = document.createElement('button');
     doneBtn.textContent = 'Done - Deal';
     doneBtn.style.cssText = btnStyle + 'background:rgba(34,197,94,0.9);';
     doneBtn.addEventListener('click', function() {
-      _shuffleRecording = false; // stop recording if active
+      _shuffleRecording = false;
       _endShufflePhysics();
     });
     btnBar.appendChild(doneBtn);
 
-  } // end if (_showPlayerButtons)
+  } // end if (_showPlayerButtons && _isSandbox)
 
-  // ── Settings Panel (always available) ──
-  var settingsBtn2 = document.createElement('button');
-  settingsBtn2.textContent = 'Settings';
-  settingsBtn2.style.cssText = btnStyle + 'background:rgba(100,100,100,0.9);';
-  settingsBtn2.addEventListener('click', function() {
-    var panel = document.getElementById('shuffleSettingsPanel');
-    if (panel) panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
-  });
-  btnBar.appendChild(settingsBtn2);
-  _createShuffleSettingsPanel(tableEl);
+  // ── Settings Panel (sandbox only) ──
+  if (_isSandbox) {
+    var settingsBtn2 = document.createElement('button');
+    settingsBtn2.textContent = 'Settings';
+    settingsBtn2.style.cssText = btnStyle + 'background:rgba(100,100,100,0.9);';
+    settingsBtn2.addEventListener('click', function() {
+      var panel = document.getElementById('shuffleSettingsPanel');
+      if (panel) panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
+    });
+    btnBar.appendChild(settingsBtn2);
+    _createShuffleSettingsPanel(tableEl);
+  }
 
   // Mouse/touch handlers — only active when player is shuffling
   if (!_showPlayerButtons) {
