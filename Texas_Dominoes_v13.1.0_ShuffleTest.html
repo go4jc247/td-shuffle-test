@@ -16596,9 +16596,9 @@ var SHUFFLE_PHYSICS = {
   playbackShowFinger: true, // show ghost finger during replay
 
   // ── Pick Phase / Pile Circles ──
-  pileDist: 0.70,           // 0=center, 1=at hand edge (fraction of center-to-hand distance)
-  pileRadius: 0.08,         // pile circle radius as fraction of min(W,H)
-  centerCircleRadius: 0.60, // center "DRAW" circle radius as fraction of areaRadius*H
+  pileDist: 1.50,           // 0=center, 1=at hand edge, >1=past hand edge
+  pileRadius: 0.16,         // pile circle radius as fraction of min(W,H)
+  centerCircleRadius: 0.45, // center "DRAW" circle radius as fraction of areaRadius*H
 };
 // Store defaults for Reset button
 var _shufflePhysicsDefaults = JSON.parse(JSON.stringify(SHUFFLE_PHYSICS));
@@ -20014,7 +20014,7 @@ async function _runPickPhase() {
   pileTitle.innerHTML = 'Pile Positions <span id="pilePanelClose" style="cursor:pointer;font-size:14px;color:rgba(255,255,255,0.4);line-height:1;">\u2715</span>';
   pilePanel.appendChild(pileTitle);
 
-  _pileSlider('Pile Distance', 'pileDist', 0.1, 1.0, 0.02, 2);
+  _pileSlider('Pile Distance', 'pileDist', 0.1, 2.0, 0.02, 2);
   _pileSlider('Pile Size', 'pileRadius', 0.03, 0.25, 0.005, 3);
   _pileSlider('Center Circle Size', 'centerCircleRadius', 0.2, 1.2, 0.05, 2);
   _pileSlider('Center X', 'centerXN', 0.1, 0.9, 0.005, 3);
