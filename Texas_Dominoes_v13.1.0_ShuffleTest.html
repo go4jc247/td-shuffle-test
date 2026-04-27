@@ -16599,7 +16599,7 @@ var SHUFFLE_PHYSICS = {
   pileDist: 1.00,           // base distance from center circle edge outward (multiplier of centerRadius)
   pileRadius: 0.16,         // pile circle radius as fraction of min(W,H)
   centerCircleRadius: 0.45, // center "DRAW" circle radius as fraction of areaRadius*H
-  pileSeatDist: {0:1.45, 1:0.70, 2:0.50, 3:0.70, 4:0.60, 5:0.60}, // per-seat distance
+  pileSeatDist: {},         // per-seat distance override (uses pileDist if not set)
   pileSeatYOff: {},         // per-seat Y offset as fraction of H (-0.2 to 0.2)
 };
 // Store defaults for Reset button
@@ -20206,13 +20206,11 @@ async function _runPickPhase() {
   var _pileTiles = {}; // seat -> [entry, entry, ...]
 
   function _computePilePosition(seat) {
-    var hc = getSeatHandCenter(seat);
-    // Direction from center circle to hand
-    var dx = hc.x - centerCx, dy = hc.y - centerCy;
-    var dist = Math.sqrt(dx * dx + dy * dy);
-    if (dist < 1) { dx = 0; dy = 1; dist = 1; }
-    // Normalize direction
-    var nx = dx / dist, ny = dy / dist;
+    // Evenly spaced around center circle — seat 0 at bottom (6 o'clock), then clockwise
+    var angleStart = Math.PI / 2; // 6 o'clock = 90° in standard coords (positive Y = down)
+    var angleStep = (2 * Math.PI) / playerCount;
+    var angle = angleStart + seat * angleStep;
+    var nx = Math.cos(angle), ny = Math.sin(angle);
     // Per-seat distance (or global default)
     var seatDist = (SP.pileSeatDist && SP.pileSeatDist[seat] !== undefined) ? SP.pileSeatDist[seat] : SP.pileDist;
     // Place pile outward from center circle edge
