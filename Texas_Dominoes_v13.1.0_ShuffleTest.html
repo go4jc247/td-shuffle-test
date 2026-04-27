@@ -20177,55 +20177,104 @@ async function _runPickPhase() {
     });
   }
 
-  // ── AI pick — physics-based slide toward seat, tiles bump each other ──
+  // ── AI pick — single controller, round-robin, colored ghost fingers ──
+  var AI_SEAT_COLORS = ['rgba(239,68,68,', 'rgba(59,130,246,', 'rgba(34,197,94,', 'rgba(234,179,8,', 'rgba(168,85,247,', 'rgba(236,72,153,'];
+
+  function slideTileToSeat(entry, aiSeat, slotIdx, seatCenter, color) {
+    entry.picked = true;
+    var body = entry._body;
+    var constraint = grabBody(body, body.position.x, body.position.y);
+    var startX = body.position.x, startY = body.position.y;
+    var targetX = seatCenter.x, targetY = seatCenter.y;
+    var slideDuration = (400 + Math.random() * 200) / SPEED_MULTIPLIER;
+    var slideStart = performance.now();
+
+    // Create ghost finger circle
+    var ghost = document.createElement('div');
+    ghost.className = 'aiPickGhost';
+    ghost.style.cssText = 'position:absolute;width:60px;height:60px;border:3px solid ' + color + '0.7);border-radius:50%;pointer-events:none;z-index:505;transform:translate(-50%,-50%);background:' + color + '0.1);';
+    ghost.style.left = startX + 'px';
+    ghost.style.top = startY + 'px';
+    tableEl.appendChild(ghost);
+
+    return new Promise(function(resolveSlide) {
+      var slideInterval = setInterval(function() {
+        var elapsed = performance.now() - slideStart;
+        var t = Math.min(1, elapsed / slideDuration);
+        var et = 1 - Math.pow(1 - t, 2); // ease-out
+        var cx = startX + (targetX - startX) * et;
+        var cy = startY + (targetY - startY) * et;
+        constraint.pointA.x = cx;
+        constraint.pointA.y = cy;
+        ghost.style.left = cx + 'px';
+        ghost.style.top = cy + 'px';
+        if (t >= 1) {
+          clearInterval(slideInterval);
+          releaseGrab(constraint);
+          ghost.remove();
+          snapTileToHand(entry, aiSeat, slotIdx, false);
+          resolveSlide();
+        }
+      }, 16);
+    });
+  }
+
   async function aiGroupPick(seats, groupLabel) {
     if (seats.length === 0) return;
     hint.textContent = groupLabel;
     counter.textContent = '';
 
-    var seatPromises = [];
+    // Track picks per seat
+    var seatPicks = {};
+    var seatCenters = {};
     for (var si = 0; si < seats.length; si++) {
-      (function(aiSeat) {
-        var seatCenter = getSeatHandCenter(aiSeat);
-        seatPromises.push((async function() {
-          for (var pick = 0; pick < handSize; pick++) {
-            var available = [];
-            for (var j = 0; j < pool.length; j++) {
-              if (!pool[j].picked && pool[j]._body && !pool[j]._body.isStatic) available.push(pool[j]);
-            }
-            if (available.length === 0) break;
-            var entry = available[Math.floor(Math.random() * available.length)];
-            entry.picked = true; // Mark immediately to prevent race with parallel seats
-            var body = entry._body;
-
-            // Slide tile toward seat using physics constraint
-            var constraint = grabBody(body, body.position.x, body.position.y);
-            var startX = body.position.x, startY = body.position.y;
-            var targetX = seatCenter.x, targetY = seatCenter.y;
-            var slideDuration = (400 + Math.random() * 200) / SPEED_MULTIPLIER;
-            var slideStart = performance.now();
-
-            await new Promise(function(resolveSlide) {
-              var slideInterval = setInterval(function() {
-                var elapsed = performance.now() - slideStart;
-                var t = Math.min(1, elapsed / slideDuration);
-                var et = 1 - Math.pow(1 - t, 2); // ease-out
-                constraint.pointA.x = startX + (targetX - startX) * et;
-                constraint.pointA.y = startY + (targetY - startY) * et;
-                if (t >= 1) {
-                  clearInterval(slideInterval);
-                  releaseGrab(constraint);
-                  snapTileToHand(entry, aiSeat, pick, false);
-                  resolveSlide();
-                }
-              }, 16);
-            });
-            await new Promise(function(r) { setTimeout(r, (60 + Math.random() * 80) / SPEED_MULTIPLIER); });
-          }
-        })());
-      })(seats[si]);
+      seatPicks[seats[si]] = 0;
+      seatCenters[seats[si]] = getSeatHandCenter(seats[si]);
     }
-    await Promise.all(seatPromises);
+
+    // Round-robin: each seat picks one tile, then next seat, repeat
+    var totalNeeded = seats.length * handSize;
+    var picked = 0;
+    var roundIdx = 0;
+
+    while (picked < totalNeeded) {
+      // Collect all available tiles ONCE per round
+      var available = [];
+      for (var j = 0; j < pool.length; j++) {
+        if (!pool[j].picked && pool[j]._body && !pool[j]._body.isStatic) available.push(pool[j]);
+      }
+      if (available.length === 0) break;
+
+      // Each seat picks one tile this round (sequentially, no race)
+      for (var si = 0; si < seats.length; si++) {
+        var aiSeat = seats[si];
+        if (seatPicks[aiSeat] >= handSize) continue;
+
+        // Re-check available (previous seat in this round may have taken one)
+        var stillAvailable = [];
+        for (var j = 0; j < pool.length; j++) {
+          if (!pool[j].picked && pool[j]._body && !pool[j]._body.isStatic) stillAvailable.push(pool[j]);
+        }
+        if (stillAvailable.length === 0) break;
+
+        var entry = stillAvailable[Math.floor(Math.random() * stillAvailable.length)];
+        var slotIdx = seatPicks[aiSeat];
+        var color = AI_SEAT_COLORS[aiSeat % AI_SEAT_COLORS.length];
+
+        await slideTileToSeat(entry, aiSeat, slotIdx, seatCenters[aiSeat], color);
+        seatPicks[aiSeat]++;
+        picked++;
+
+        // Small pause between picks within a round
+        await new Promise(function(r) { setTimeout(r, (40 + Math.random() * 60) / SPEED_MULTIPLIER); });
+      }
+      roundIdx++;
+    }
+
+    // Clean up any stray ghost elements
+    var ghosts = document.querySelectorAll('.aiPickGhost');
+    for (var gi = 0; gi < ghosts.length; gi++) ghosts[gi].remove();
+
     await new Promise(function(r) { setTimeout(r, 300 / SPEED_MULTIPLIER); });
   }
 
@@ -20236,34 +20285,19 @@ async function _runPickPhase() {
     var shufflerCenter = getSeatHandCenter(dealerSeat);
     var shufflerPick = 0;
     var faceUp = (dealerSeat === localSeat);
+    var color = AI_SEAT_COLORS[dealerSeat % AI_SEAT_COLORS.length];
     for (var j = 0; j < pool.length; j++) {
       if (!pool[j].picked && pool[j]._body && !pool[j]._body.isStatic) {
-        var entry = pool[j];
-        entry.picked = true; // Mark immediately
-        var body = entry._body;
-        var constraint = grabBody(body, body.position.x, body.position.y);
-        var startX = body.position.x, startY = body.position.y;
-        var targetX = shufflerCenter.x, targetY = shufflerCenter.y;
-        var slideDuration = 350 / SPEED_MULTIPLIER;
-        var slideStart = performance.now();
-        await new Promise(function(resolveSlide) {
-          var slideInterval = setInterval(function() {
-            var elapsed = performance.now() - slideStart;
-            var t = Math.min(1, elapsed / slideDuration);
-            var et = 1 - Math.pow(1 - t, 2);
-            constraint.pointA.x = startX + (targetX - startX) * et;
-            constraint.pointA.y = startY + (targetY - startY) * et;
-            if (t >= 1) {
-              clearInterval(slideInterval);
-              releaseGrab(constraint);
-              snapTileToHand(entry, dealerSeat, shufflerPick, faceUp);
-              resolveSlide();
-            }
-          }, 16);
-        });
+        await slideTileToSeat(pool[j], dealerSeat, shufflerPick, shufflerCenter, color);
+        // If local player is shuffler, flip face up after snap
+        if (faceUp && sprites[dealerSeat][shufflerPick]) {
+          sprites[dealerSeat][shufflerPick].sprite.setFaceUp(true);
+        }
         shufflerPick++;
       }
     }
+    var ghosts = document.querySelectorAll('.aiPickGhost');
+    for (var gi = 0; gi < ghosts.length; gi++) ghosts[gi].remove();
     if (dealerSeat === localSeat) {
       // Attach gameplay handlers for shuffler's auto-dealt tiles
       for (var si = 0; si < sprites[localSeat].length; si++) {
