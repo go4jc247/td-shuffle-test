@@ -16744,7 +16744,7 @@ function _playRecording(rec, cx, cy, r, ptr) {
       }
       if (!_shuffleSandboxActive) {
         setTimeout(function() {
-          if (_shufflePhysicsActive) _endShufflePhysics();
+          if (_shufflePhysicsActive) _endShuffleForPick();
         }, 400);
       }
       return;
@@ -17334,7 +17334,7 @@ function _createShuffleUI(rect) {
     doneBtn.textContent = 'Done Shuffling';
     doneBtn.style.cssText = btnStyle + 'background:rgba(34,197,94,0.9);';
     doneBtn.addEventListener('click', function() {
-      _endShufflePhysics();
+      _endShuffleForPick();
     });
     btnBar.appendChild(doneBtn);
   }
@@ -18180,6 +18180,29 @@ function _applyShuffleSettingsLive() {
   }
 }
 
+// Soft end: remove shuffle UI, resolve promise, but keep physics alive for pick phase
+function _endShuffleForPick() {
+  _shuffleGatherActive = false;
+
+  // Remove shuffle UI only
+  var btnBar = document.getElementById('shuffleBtnBar');
+  if (btnBar) btnBar.remove();
+  var hint = document.getElementById('shuffleHint');
+  if (hint) hint.remove();
+  var ring = document.getElementById('shuffleAreaRing');
+  if (ring) ring.remove();
+  var settingsPanel = document.getElementById('shuffleSettingsPanel');
+  if (settingsPanel) settingsPanel.remove();
+
+  // Resolve the promise to continue to pick phase — physics keeps running
+  if (_shufflePhysicsResolve) {
+    var resolve = _shufflePhysicsResolve;
+    _shufflePhysicsResolve = null;
+    resolve();
+  }
+}
+
+// Full teardown — stops physics, removes everything
 function _endShufflePhysics() {
   _shufflePhysicsActive = false;
   _shuffleGatherActive = false;
@@ -19901,18 +19924,42 @@ async function _runPickPhase() {
   // Reset sprites arrays — will be rebuilt as tiles are picked
   for (var s = 0; s < playerCount; s++) sprites[s] = [];
 
-  // Create overlay for click detection
+  // ── Keep physics engine running for bumping ──
+  // The shuffle physics is still active — _shufflePhysicsBodies has all tile bodies
+  // Just remove shuffle UI (buttons, hint, ring) but keep overlay and physics loop
+  var btnBar = document.getElementById('shuffleBtnBar');
+  if (btnBar) btnBar.remove();
+  var shuffleHint = document.getElementById('shuffleHint');
+  if (shuffleHint) shuffleHint.remove();
+  var ring = document.getElementById('shuffleAreaRing');
+  if (ring) ring.remove();
+  var settingsPanel = document.getElementById('shuffleSettingsPanel');
+  if (settingsPanel) settingsPanel.remove();
+  // Stop gather
+  _shuffleGatherActive = false;
+
+  // Reuse or create overlay
   var tableEl = document.getElementById('tableMain');
-  var overlay = document.createElement('div');
-  overlay.id = 'pickPhaseOverlay';
-  overlay.style.cssText = 'position:absolute;inset:0;z-index:500;cursor:pointer;touch-action:none;';
-  tableEl.appendChild(overlay);
+  var overlay = document.getElementById('shufflePhysicsOverlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'pickPhaseOverlay';
+    overlay.style.cssText = 'position:absolute;inset:0;z-index:500;cursor:pointer;touch-action:none;';
+    tableEl.appendChild(overlay);
+  } else {
+    // Clone to remove old shuffle touch handlers
+    var newOverlay = overlay.cloneNode(false);
+    overlay.parentNode.replaceChild(newOverlay, overlay);
+    overlay = newOverlay;
+    overlay.id = 'pickPhaseOverlay';
+    overlay.style.cursor = 'pointer';
+  }
 
   // Hint text
   var hint = document.createElement('div');
   hint.id = 'pickHint';
   hint.style.cssText = 'position:absolute;top:5%;left:50%;transform:translateX(-50%);z-index:510;background:rgba(0,0,0,0.7);color:rgba(255,255,255,0.95);padding:8px 20px;border-radius:20px;font-size:14px;font-weight:700;font-family:system-ui,sans-serif;pointer-events:none;transition:opacity 0.4s;';
-  hint.textContent = 'Pick your ' + handSize + ' dominoes';
+  hint.textContent = 'Slide your ' + handSize + ' dominoes to your hand';
   tableEl.appendChild(hint);
 
   // Counter
@@ -19922,86 +19969,89 @@ async function _runPickPhase() {
   counter.textContent = '0 / ' + handSize;
   tableEl.appendChild(counter);
 
+  // Map pool entries to physics bodies
+  for (var pi = 0; pi < pool.length; pi++) {
+    pool[pi]._bodyIdx = _shufflePhysicsRealSprites.indexOf(pool[pi].sprite);
+    pool[pi]._body = (pool[pi]._bodyIdx >= 0) ? _shufflePhysicsBodies[pool[pi]._bodyIdx] : null;
+  }
+
   // Hands being built — array of tiles per seat
   var pickedHands = [];
   for (var s2 = 0; s2 < playerCount; s2++) pickedHands.push([]);
 
-  // Compute staging position for AI tiles during pick phase.
-  // Gently nudge each tile outward from table center toward its nearest edge.
-  // The hands are already near the edges — just push them ~15% further out
-  // to clear the center pile area without looking sloppy.
-  var _edgeDirCache = {}; // cache push direction per seat
-  function getEdgePosition(targetSeat, slotIdx) {
-    var rect = getRect();
-    var W = rect.width, H = rect.height;
-    var playerNum = seatToPlayer(targetSeat);
-    var handPos = getHandPosition(playerNum, slotIdx);
-    if (!handPos) return null;
-    var sc = handPos.s || SP.tileScale;
-
-    // Determine push direction from average hand center (computed once per seat)
-    if (!_edgeDirCache[targetSeat]) {
-      var sumX = 0, sumY = 0, count = 0;
-      for (var si = 0; si < handSize; si++) {
-        var hp = getHandPosition(playerNum, si);
-        if (hp) { sumX += hp.x + 28; sumY += hp.y + 56; count++; }
-      }
-      var avgX = count > 0 ? sumX / count : W * 0.5;
-      var avgY = count > 0 ? sumY / count : H * 0.5;
-      // Use closest wall (normalized 0-1) to determine direction
-      var nLeft = avgX / W;
-      var nRight = 1 - nLeft;
-      var nTop = avgY / H;
-      var nBottom = 1 - nTop;
-      var minWall = Math.min(nLeft, nRight, nTop, nBottom);
-      if (minWall === nLeft) _edgeDirCache[targetSeat] = 'left';
-      else if (minWall === nRight) _edgeDirCache[targetSeat] = 'right';
-      else if (minWall === nTop) _edgeDirCache[targetSeat] = 'top';
-      else _edgeDirCache[targetSeat] = 'bottom';
-      console.log('[edge] seat', targetSeat, 'player', playerNum,
-        'L=' + nLeft.toFixed(2), 'R=' + nRight.toFixed(2),
-        'T=' + nTop.toFixed(2), 'B=' + nBottom.toFixed(2),
-        '→ dir=' + _edgeDirCache[targetSeat]);
+  // Get hand center position for a seat
+  function getSeatHandCenter(seat) {
+    var playerNum = seatToPlayer(seat);
+    var sumX = 0, sumY = 0, count = 0;
+    for (var si = 0; si < handSize; si++) {
+      var hp = getHandPosition(playerNum, si);
+      if (hp) { sumX += hp.x + 28; sumY += hp.y + 56; count++; }
     }
-    var dir = _edgeDirCache[targetSeat];
-
-    // Nudge: push the tile ~15% of the table dimension toward its edge
-    var nudge = 0.15;
-    var ex = handPos.x, ey = handPos.y, erz = handPos.rz;
-    if (dir === 'top') {
-      ey = handPos.y - H * nudge;
-    } else if (dir === 'bottom') {
-      ey = handPos.y + H * nudge;
-    } else if (dir === 'left') {
-      ex = handPos.x - W * nudge;
-    } else {
-      ex = handPos.x + W * nudge;
-    }
-    return { x: ex, y: ey, s: sc, rz: erz, ry: 0 };
+    return count > 0 ? { x: sumX / count, y: sumY / count } : { x: getRect().width / 2, y: getRect().height / 2 };
   }
 
-  // Animate a picked tile — slides directly to final hand position
-  function animateTileToHand(entry, targetSeat, slotIdx, faceUp) {
-    var playerNum = seatToPlayer(targetSeat);
-    var targetPos = getHandPosition(playerNum, slotIdx);
-    if (!targetPos) return Promise.resolve();
+  // Snap a tile to its final hand position (make static, remove from physics flow)
+  function snapTileToHand(entry, seat, slotIdx, faceUp) {
     entry.picked = true;
+    var playerNum = seatToPlayer(seat);
+    var targetPos = getHandPosition(playerNum, slotIdx);
+    if (!targetPos) return;
+
+    // Make physics body static at target
+    if (entry._body) {
+      Matter.Body.setStatic(entry._body, true);
+      Matter.Body.setPosition(entry._body, { x: targetPos.x + 28, y: targetPos.y + 56 });
+      Matter.Body.setAngle(entry._body, (targetPos.rz || 0) * Math.PI / 180);
+      Matter.Body.setVelocity(entry._body, { x: 0, y: 0 });
+    }
+
     entry.sprite.classList.remove('shuffleSimple');
-    bringToFront(entry.sprite);
-    // Longer animation for visible slide across the table
-    var speed = Math.max(SP.dealSpeed, 500) / SPEED_MULTIPLIER;
-    return animateSprite(entry.sprite, {
+    entry.sprite.setPose({
       x: targetPos.x, y: targetPos.y,
       s: targetPos.s, rz: targetPos.rz,
       ry: faceUp ? 180 : 0
-    }, speed);
-  }
+    });
+    bringToFront(entry.sprite);
 
-  // Assign a picked tile into a seat's sprite/data arrays
-  function assignTileToSeat(entry, seat, slotIdx) {
     var data = { sprite: entry.sprite, tile: entry.tile, originalSlot: slotIdx };
     sprites[seat][slotIdx] = data;
     pickedHands[seat].push(entry.tile);
+  }
+
+  // Find pool entry for a physics body
+  function poolEntryForBody(body) {
+    for (var i = 0; i < pool.length; i++) {
+      if (pool[i]._body === body && !pool[i].picked) return pool[i];
+    }
+    return null;
+  }
+
+  // Find closest unpicked body to a point
+  function findUnpickedBodyAt(px, py, maxDist) {
+    var best = null, bestD2 = maxDist * maxDist;
+    for (var i = 0; i < pool.length; i++) {
+      if (pool[i].picked || !pool[i]._body) continue;
+      var b = pool[i]._body;
+      var dx = b.position.x - px, dy = b.position.y - py;
+      var d2 = dx * dx + dy * dy;
+      if (d2 < bestD2) { bestD2 = d2; best = b; }
+    }
+    return best;
+  }
+
+  // Create a physics constraint to drag a body
+  function grabBody(body, px, py) {
+    var c = Matter.Constraint.create({
+      pointA: { x: px, y: py },
+      bodyB: body,
+      pointB: { x: px - body.position.x, y: py - body.position.y },
+      stiffness: 0.8, damping: 0.1, length: 0
+    });
+    Matter.Composite.add(_shufflePhysicsEngine.world, c);
+    return c;
+  }
+  function releaseGrab(constraint) {
+    if (constraint) Matter.Composite.remove(_shufflePhysicsEngine.world, constraint);
   }
 
   // ── TEAM-BASED DRAW ORDER ──
@@ -20028,197 +20078,146 @@ async function _runPickPhase() {
   var localIsOpponent = opponentSeats.indexOf(localSeat) >= 0;
   var localIsPartner = partnerSeats.indexOf(localSeat) >= 0;
 
-  // Player pick — drag tiles toward your hand, or tap to auto-slide
+  // ── Physics-based player pick — drag with constraints, tiles bump ──
   var playerPicked = 0;
+  var _pickGrabs = {}; // touchId -> { body, constraint, entry }
+  var _pickMouseGrab = null;
+  var localHandCenter = getSeatHandCenter(localSeat);
+  var snapZoneY = getRect().height * 0.6;
+
+  function pickTileForPlayer(entry) {
+    if (playerPicked >= handSize || entry.picked) return;
+    var slotIdx = playerPicked;
+    playerPicked++;
+    snapTileToHand(entry, localSeat, slotIdx, true);
+    counter.textContent = playerPicked + ' / ' + handSize;
+    entry.sprite.addEventListener('click', function() { handlePlayer1Click(entry.sprite); });
+    entry.sprite.addEventListener('touchstart', function(ev) {
+      ev.preventDefault(); ev.stopPropagation();
+      handlePlayer1Click(entry.sprite);
+    }, { passive: false });
+  }
+
   function playerPickPhase() {
     return new Promise(function(resolve) {
-      hint.textContent = 'Pick your ' + handSize + ' dominoes — drag or tap';
+      hint.textContent = 'Slide ' + handSize + ' dominoes to your hand';
       counter.textContent = '0 / ' + handSize;
 
-      var _pickDrags = {}; // touchId -> { entry, startX, startY }
-      var _pickMouseDrag = null;
-
-      // Find closest unpicked tile to a point
-      function findTileAt(px, py) {
-        var bestIdx = -1, bestDist = Infinity;
-        var tRect = tableEl.getBoundingClientRect();
-        for (var i = 0; i < pool.length; i++) {
-          if (pool[i].picked) continue;
-          var sp = pool[i].sprite;
-          var spRect = sp.getBoundingClientRect();
-          var spCx = spRect.left + spRect.width / 2 - tRect.left;
-          var spCy = spRect.top + spRect.height / 2 - tRect.top;
-          var dx = px - spCx, dy = py - spCy;
-          var dist = Math.sqrt(dx * dx + dy * dy);
-          if (dist < Math.max(spRect.width, spRect.height) * 0.8 && dist < bestDist) {
-            bestDist = dist; bestIdx = i;
-          }
-        }
-        return bestIdx >= 0 ? pool[bestIdx] : null;
-      }
-
-      // Get player's hand center (for snap detection)
-      var playerNum = seatToPlayer(localSeat);
-      var handCenterY = 0, handCount = 0;
-      for (var hi = 0; hi < handSize; hi++) {
-        var hp = getHandPosition(playerNum, hi);
-        if (hp) { handCenterY += hp.y + 56; handCount++; }
-      }
-      handCenterY = handCount > 0 ? handCenterY / handCount : getRect().height * 0.85;
-      // Snap zone: lower 35% of screen
-      var snapZoneY = getRect().height * 0.65;
-
-      function pickTile(entry) {
-        if (playerPicked >= handSize || entry.picked) return;
-        var slotIdx = playerPicked;
-        playerPicked++;
-        assignTileToSeat(entry, localSeat, slotIdx);
-        counter.textContent = playerPicked + ' / ' + handSize;
-
-        animateTileToHand(entry, localSeat, slotIdx, true).then(function() {
-          entry.sprite.addEventListener('click', function() { handlePlayer1Click(entry.sprite); });
-          entry.sprite.addEventListener('touchstart', function(ev) {
-            ev.preventDefault(); ev.stopPropagation();
-            handlePlayer1Click(entry.sprite);
-          }, { passive: false });
-        });
-
-        if (playerPicked >= handSize) {
-          cleanup();
-          resolve();
-        }
-      }
-
-      function cleanup() {
-        overlay.removeEventListener('mousedown', onMouseDown);
-        overlay.removeEventListener('mousemove', onMouseMove);
-        overlay.removeEventListener('mouseup', onMouseUp);
-        overlay.removeEventListener('touchstart', onTouchStart);
-        overlay.removeEventListener('touchmove', onTouchMove);
-        overlay.removeEventListener('touchend', onTouchEnd);
-      }
-
-      // ── Mouse handlers ──
-      function onMouseDown(e) {
-        e.preventDefault();
-        var br = tableEl.getBoundingClientRect();
-        var mx = e.clientX - br.left, my = e.clientY - br.top;
-        var entry = findTileAt(mx, my);
-        if (entry && !entry.picked) {
-          _pickMouseDrag = { entry: entry, startX: mx, startY: my, origPose: entry.sprite.getPose() };
-          bringToFront(entry.sprite);
-        }
-      }
-      function onMouseMove(e) {
-        if (!_pickMouseDrag) return;
-        var br = tableEl.getBoundingClientRect();
-        var mx = e.clientX - br.left, my = e.clientY - br.top;
-        var entry = _pickMouseDrag.entry;
-        if (!entry.picked) {
-          entry.sprite.setPose({ x: mx - 28, y: my - 56, s: SP.tileScale, rz: 0, ry: 0 });
-        }
-      }
-      function onMouseUp(e) {
-        if (!_pickMouseDrag) return;
-        var br = tableEl.getBoundingClientRect();
-        var my = e.clientY - br.top;
-        var entry = _pickMouseDrag.entry;
-        var startY = _pickMouseDrag.startY;
-        _pickMouseDrag = null;
-        if (!entry.picked) {
-          var dragDist = Math.abs(my - startY);
-          // Pick if dragged into snap zone OR if it was just a tap
-          if (my > snapZoneY || dragDist < 15) {
-            pickTile(entry);
-          }
-        }
-      }
-
-      // ── Touch handlers (multi-finger) ──
       function onTouchStart(e) {
         e.preventDefault();
-        var br = tableEl.getBoundingClientRect();
+        var br = overlay.getBoundingClientRect();
         for (var ti = 0; ti < e.changedTouches.length; ti++) {
           var t = e.changedTouches[ti];
           var tx = t.clientX - br.left, ty = t.clientY - br.top;
-          var entry = findTileAt(tx, ty);
-          if (entry && !entry.picked) {
-            _pickDrags[t.identifier] = {
-              entry: entry, startX: tx, startY: ty,
-              origPose: entry.sprite.getPose()
-            };
-            bringToFront(entry.sprite);
+          var body = findUnpickedBodyAt(tx, ty, 80);
+          if (body) {
+            _pickGrabs[t.identifier] = { body: body, constraint: grabBody(body, tx, ty), entry: poolEntryForBody(body) };
           }
         }
       }
       function onTouchMove(e) {
         e.preventDefault();
-        var br = tableEl.getBoundingClientRect();
+        var br = overlay.getBoundingClientRect();
         for (var ti = 0; ti < e.changedTouches.length; ti++) {
           var t = e.changedTouches[ti];
-          var drag = _pickDrags[t.identifier];
-          if (!drag || drag.entry.picked) continue;
-          var tx = t.clientX - br.left, ty = t.clientY - br.top;
-          drag.entry.sprite.setPose({ x: tx - 28, y: ty - 56, s: SP.tileScale, rz: 0, ry: 0 });
+          var g = _pickGrabs[t.identifier];
+          if (g) { g.constraint.pointA.x = t.clientX - br.left; g.constraint.pointA.y = t.clientY - br.top; }
         }
       }
       function onTouchEnd(e) {
         e.preventDefault();
-        var br = tableEl.getBoundingClientRect();
+        var br = overlay.getBoundingClientRect();
         for (var ti = 0; ti < e.changedTouches.length; ti++) {
           var t = e.changedTouches[ti];
-          var drag = _pickDrags[t.identifier];
-          if (!drag) continue;
-          delete _pickDrags[t.identifier];
-          var ty = t.clientY - br.top;
-          var entry = drag.entry;
-          if (!entry.picked) {
-            var dragDist = Math.sqrt(Math.pow(t.clientX - br.left - drag.startX, 2) + Math.pow(ty - drag.startY, 2));
-            if (ty > snapZoneY || dragDist < 15) {
-              pickTile(entry);
-            } else {
-              // Return tile to original position
-              entry.sprite.setPose(drag.origPose);
-            }
+          var g = _pickGrabs[t.identifier];
+          if (g) {
+            releaseGrab(g.constraint);
+            if (g.entry && !g.entry.picked && (t.clientY - br.top) > snapZoneY) pickTileForPlayer(g.entry);
+            delete _pickGrabs[t.identifier];
           }
         }
+        if (playerPicked >= handSize) { cleanup(); resolve(); }
       }
-
-      overlay.addEventListener('mousedown', onMouseDown);
-      overlay.addEventListener('mousemove', onMouseMove);
-      overlay.addEventListener('mouseup', onMouseUp);
+      function onMouseDown(e) {
+        var br = overlay.getBoundingClientRect();
+        var mx = e.clientX - br.left, my = e.clientY - br.top;
+        var body = findUnpickedBodyAt(mx, my, 80);
+        if (body) _pickMouseGrab = { body: body, constraint: grabBody(body, mx, my), entry: poolEntryForBody(body) };
+      }
+      function onMouseMove(e) {
+        if (!_pickMouseGrab) return;
+        var br = overlay.getBoundingClientRect();
+        _pickMouseGrab.constraint.pointA.x = e.clientX - br.left;
+        _pickMouseGrab.constraint.pointA.y = e.clientY - br.top;
+      }
+      function onMouseUp(e) {
+        if (!_pickMouseGrab) return;
+        releaseGrab(_pickMouseGrab.constraint);
+        var br = overlay.getBoundingClientRect();
+        if (_pickMouseGrab.entry && !_pickMouseGrab.entry.picked && (e.clientY - br.top) > snapZoneY) pickTileForPlayer(_pickMouseGrab.entry);
+        _pickMouseGrab = null;
+        if (playerPicked >= handSize) { cleanup(); resolve(); }
+      }
+      function cleanup() {
+        overlay.removeEventListener('touchstart', onTouchStart);
+        overlay.removeEventListener('touchmove', onTouchMove);
+        overlay.removeEventListener('touchend', onTouchEnd);
+        overlay.removeEventListener('mousedown', onMouseDown);
+        overlay.removeEventListener('mousemove', onMouseMove);
+        overlay.removeEventListener('mouseup', onMouseUp);
+      }
       overlay.addEventListener('touchstart', onTouchStart, { passive: false });
       overlay.addEventListener('touchmove', onTouchMove, { passive: false });
       overlay.addEventListener('touchend', onTouchEnd, { passive: false });
+      overlay.addEventListener('mousedown', onMouseDown);
+      overlay.addEventListener('mousemove', onMouseMove);
+      overlay.addEventListener('mouseup', onMouseUp);
     });
   }
 
-  // AI group picks — seats pick simultaneously, tiles staggered visibly
+  // ── AI pick — physics-based slide toward seat, tiles bump each other ──
   async function aiGroupPick(seats, groupLabel) {
     if (seats.length === 0) return;
     hint.textContent = groupLabel;
     counter.textContent = '';
 
-    // Each seat picks tiles one at a time, but all seats go in parallel
     var seatPromises = [];
     for (var si = 0; si < seats.length; si++) {
       (function(aiSeat) {
+        var seatCenter = getSeatHandCenter(aiSeat);
         seatPromises.push((async function() {
           for (var pick = 0; pick < handSize; pick++) {
             var available = [];
             for (var j = 0; j < pool.length; j++) {
-              if (!pool[j].picked) available.push(j);
+              if (!pool[j].picked && pool[j]._body && !pool[j]._body.isStatic) available.push(pool[j]);
             }
             if (available.length === 0) break;
-            var randIdx = available[Math.floor(Math.random() * available.length)];
-            var entry = pool[randIdx];
-            assignTileToSeat(entry, aiSeat, pick);
-            // Animate slide to hand — wait for each tile to arrive before picking next
-            await animateTileToHand(entry, aiSeat, pick, false);
-            // Small pause between picks for natural feel
-            await new Promise(function(r) {
-              setTimeout(r, (80 + Math.random() * 120) / SPEED_MULTIPLIER);
+            var entry = available[Math.floor(Math.random() * available.length)];
+            var body = entry._body;
+
+            // Slide tile toward seat using physics constraint
+            var constraint = grabBody(body, body.position.x, body.position.y);
+            var startX = body.position.x, startY = body.position.y;
+            var targetX = seatCenter.x, targetY = seatCenter.y;
+            var slideDuration = (400 + Math.random() * 200) / SPEED_MULTIPLIER;
+            var slideStart = performance.now();
+
+            await new Promise(function(resolveSlide) {
+              var slideInterval = setInterval(function() {
+                var elapsed = performance.now() - slideStart;
+                var t = Math.min(1, elapsed / slideDuration);
+                var et = 1 - Math.pow(1 - t, 2); // ease-out
+                constraint.pointA.x = startX + (targetX - startX) * et;
+                constraint.pointA.y = startY + (targetY - startY) * et;
+                if (t >= 1) {
+                  clearInterval(slideInterval);
+                  releaseGrab(constraint);
+                  snapTileToHand(entry, aiSeat, pick, false);
+                  resolveSlide();
+                }
+              }, 16);
             });
+            await new Promise(function(r) { setTimeout(r, (60 + Math.random() * 80) / SPEED_MULTIPLIER); });
           }
         })());
       })(seats[si]);
@@ -20227,17 +20226,37 @@ async function _runPickPhase() {
     await new Promise(function(r) { setTimeout(r, 300 / SPEED_MULTIPLIER); });
   }
 
-  // Shuffler auto-gets remaining tiles — sweep them one by one
+  // Shuffler auto-gets remaining tiles — sweep via physics
   async function shufflerAutoGet() {
     hint.textContent = 'Shuffler gets remaining tiles...';
     counter.textContent = '';
+    var shufflerCenter = getSeatHandCenter(dealerSeat);
     var shufflerPick = 0;
+    var faceUp = (dealerSeat === localSeat);
     for (var j = 0; j < pool.length; j++) {
-      if (!pool[j].picked) {
-        assignTileToSeat(pool[j], dealerSeat, shufflerPick);
-        var faceUp = (dealerSeat === localSeat);
-        await animateTileToHand(pool[j], dealerSeat, shufflerPick, faceUp);
-        await new Promise(function(r) { setTimeout(r, 60 / SPEED_MULTIPLIER); });
+      if (!pool[j].picked && pool[j]._body && !pool[j]._body.isStatic) {
+        var entry = pool[j];
+        var body = entry._body;
+        var constraint = grabBody(body, body.position.x, body.position.y);
+        var startX = body.position.x, startY = body.position.y;
+        var targetX = shufflerCenter.x, targetY = shufflerCenter.y;
+        var slideDuration = 350 / SPEED_MULTIPLIER;
+        var slideStart = performance.now();
+        await new Promise(function(resolveSlide) {
+          var slideInterval = setInterval(function() {
+            var elapsed = performance.now() - slideStart;
+            var t = Math.min(1, elapsed / slideDuration);
+            var et = 1 - Math.pow(1 - t, 2);
+            constraint.pointA.x = startX + (targetX - startX) * et;
+            constraint.pointA.y = startY + (targetY - startY) * et;
+            if (t >= 1) {
+              clearInterval(slideInterval);
+              releaseGrab(constraint);
+              snapTileToHand(entry, dealerSeat, shufflerPick, faceUp);
+              resolveSlide();
+            }
+          }, 16);
+        });
         shufflerPick++;
       }
     }
@@ -20307,6 +20326,9 @@ async function _runPickPhase() {
   if (overlay.parentNode) overlay.remove();
   if (hint.parentNode) hint.remove();
   if (counter.parentNode) counter.remove();
+
+  // Now tear down physics engine — all tiles are in their final positions
+  _endShufflePhysics();
 
   // Brief pause before UI comes back
   await new Promise(function(r) { setTimeout(r, 300 / SPEED_MULTIPLIER); });
