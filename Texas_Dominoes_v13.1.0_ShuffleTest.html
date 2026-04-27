@@ -19985,7 +19985,8 @@ async function _runPickPhase() {
     }, 100);
   });
   _shuffleGatherActive = false;
-  _shuffleAreaCenter.r = 0; // disables boundary push-back force
+  // Keep center circle boundary active so unpicked tiles gravitate back in
+  // _shuffleAreaCenter.r stays set to the center circle radius
 
   // Seat colors for AI pick ghosts and pile labels
   var AI_SEAT_COLORS = ['rgba(239,68,68,', 'rgba(59,130,246,', 'rgba(34,197,94,', 'rgba(234,179,8,', 'rgba(168,85,247,', 'rgba(236,72,153,'];
