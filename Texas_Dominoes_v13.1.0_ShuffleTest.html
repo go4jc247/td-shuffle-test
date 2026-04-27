@@ -19997,81 +19997,17 @@ async function _runPickPhase() {
     pickedHands[seat].push(entry.tile);
   }
 
-  // ── PLAYER PICK PHASE ──
-  var playerPicked = 0;
-  await new Promise(function(resolve) {
-    function handlePickClick(e) {
-      if (playerPicked >= handSize) return;
-      e.preventDefault();
-      e.stopPropagation();
-
-      var tRect = tableEl.getBoundingClientRect();
-      var clickX, clickY;
-      if (e.touches && e.touches.length > 0) {
-        clickX = e.touches[0].clientX - tRect.left;
-        clickY = e.touches[0].clientY - tRect.top;
-      } else {
-        clickX = e.clientX - tRect.left;
-        clickY = e.clientY - tRect.top;
-      }
-
-      // Find closest unpicked tile
-      var bestIdx = -1;
-      var bestDist = Infinity;
-      for (var i = 0; i < pool.length; i++) {
-        if (pool[i].picked) continue;
-        var sp = pool[i].sprite;
-        var spRect = sp.getBoundingClientRect();
-        var spCx = spRect.left + spRect.width / 2 - tRect.left;
-        var spCy = spRect.top + spRect.height / 2 - tRect.top;
-        var dx = clickX - spCx;
-        var dy = clickY - spCy;
-        var dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < Math.max(spRect.width, spRect.height) * 0.6 && dist < bestDist) {
-          bestDist = dist;
-          bestIdx = i;
-        }
-      }
-
-      if (bestIdx < 0) return;
-
-      var entry = pool[bestIdx];
-      var slotIdx = playerPicked;
-      playerPicked++;
-      assignTileToSeat(entry, localSeat, slotIdx);
-      counter.textContent = playerPicked + ' / ' + handSize;
-
-      // Animate to player's hand face-up
-      animateTileToHand(entry, localSeat, slotIdx, true).then(function() {
-        // Attach gameplay click handlers
-        entry.sprite.addEventListener('click', function() { handlePlayer1Click(entry.sprite); });
-        entry.sprite.addEventListener('touchstart', function(ev) {
-          ev.preventDefault(); ev.stopPropagation();
-          handlePlayer1Click(entry.sprite);
-        }, { passive: false });
-      });
-
-      if (playerPicked >= handSize) {
-        overlay.removeEventListener('click', handlePickClick);
-        overlay.removeEventListener('touchstart', handlePickClick);
-        resolve();
-      }
-    }
-
-    overlay.addEventListener('click', handlePickClick);
-    overlay.addEventListener('touchstart', handlePickClick, { passive: false });
-  });
-
   // ── TEAM-BASED DRAW ORDER ──
   // Determine draw groups based on shuffler's team
   var dealerSeat = session.dealer;
   var dealerTeam = (GAME_MODE === 'MOON') ? dealerSeat : (dealerSeat % 2);
+  var localTeam = (GAME_MODE === 'MOON') ? localSeat : (localSeat % 2);
 
   // Build draw groups: opponents first, then partners, then shuffler auto-gets rest
   var opponentSeats = [];
   var partnerSeats = [];
   for (var gs = 0; gs < playerCount; gs++) {
-    if (gs === dealerSeat) continue; // shuffler draws last (auto)
+    if (gs === dealerSeat) continue;
     var seatTeam = (GAME_MODE === 'MOON') ? gs : (gs % 2);
     if (seatTeam !== dealerTeam) {
       opponentSeats.push(gs);
@@ -20080,25 +20016,87 @@ async function _runPickPhase() {
     }
   }
 
-  // Helper: AI group picks simultaneously — procedural slide animation
+  // Determine which group the local player is in
+  var localIsShuffler = (localSeat === dealerSeat);
+  var localIsOpponent = opponentSeats.indexOf(localSeat) >= 0;
+  var localIsPartner = partnerSeats.indexOf(localSeat) >= 0;
+
+  // Player pick function — tap to pick tiles
+  var playerPicked = 0;
+  function playerPickPhase() {
+    return new Promise(function(resolve) {
+      hint.textContent = 'Pick your ' + handSize + ' dominoes';
+      counter.textContent = '0 / ' + handSize;
+
+      function handlePickClick(e) {
+        if (playerPicked >= handSize) return;
+        e.preventDefault();
+        e.stopPropagation();
+
+        var tRect = tableEl.getBoundingClientRect();
+        var clickX, clickY;
+        if (e.touches && e.touches.length > 0) {
+          clickX = e.touches[0].clientX - tRect.left;
+          clickY = e.touches[0].clientY - tRect.top;
+        } else {
+          clickX = e.clientX - tRect.left;
+          clickY = e.clientY - tRect.top;
+        }
+
+        var bestIdx = -1, bestDist = Infinity;
+        for (var i = 0; i < pool.length; i++) {
+          if (pool[i].picked) continue;
+          var sp = pool[i].sprite;
+          var spRect = sp.getBoundingClientRect();
+          var spCx = spRect.left + spRect.width / 2 - tRect.left;
+          var spCy = spRect.top + spRect.height / 2 - tRect.top;
+          var dx = clickX - spCx, dy = clickY - spCy;
+          var dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < Math.max(spRect.width, spRect.height) * 0.6 && dist < bestDist) {
+            bestDist = dist; bestIdx = i;
+          }
+        }
+        if (bestIdx < 0) return;
+
+        var entry = pool[bestIdx];
+        var slotIdx = playerPicked;
+        playerPicked++;
+        assignTileToSeat(entry, localSeat, slotIdx);
+        counter.textContent = playerPicked + ' / ' + handSize;
+
+        animateTileToHand(entry, localSeat, slotIdx, true).then(function() {
+          entry.sprite.addEventListener('click', function() { handlePlayer1Click(entry.sprite); });
+          entry.sprite.addEventListener('touchstart', function(ev) {
+            ev.preventDefault(); ev.stopPropagation();
+            handlePlayer1Click(entry.sprite);
+          }, { passive: false });
+        });
+
+        if (playerPicked >= handSize) {
+          overlay.removeEventListener('click', handlePickClick);
+          overlay.removeEventListener('touchstart', handlePickClick);
+          resolve();
+        }
+      }
+      overlay.addEventListener('click', handlePickClick);
+      overlay.addEventListener('touchstart', handlePickClick, { passive: false });
+    });
+  }
+
+  // AI group picks simultaneously
   async function aiGroupPick(seats, groupLabel) {
     if (seats.length === 0) return;
     hint.textContent = groupLabel;
     counter.textContent = '';
 
-    // Each seat picks handSize tiles simultaneously
     var groupPromises = [];
     for (var si = 0; si < seats.length; si++) {
-      (function(aiSeat) {
+      (function(aiSeat, seatDelay) {
         for (var pick = 0; pick < handSize; pick++) {
           (function(slotIdx) {
-            // Small stagger per tile within each seat
-            var delay = slotIdx * ((SP.dealStagger + 60) / SPEED_MULTIPLIER);
-            // Additional stagger between seats for visual variety
-            delay += si * (30 / SPEED_MULTIPLIER);
+            var delay = slotIdx * ((SP.dealStagger + 60) / SPEED_MULTIPLIER) + seatDelay;
             groupPromises.push(new Promise(function(resolve) {
               setTimeout(function() {
-                // Find random unpicked tile
                 var available = [];
                 for (var j = 0; j < pool.length; j++) {
                   if (!pool[j].picked) available.push(j);
@@ -20112,46 +20110,83 @@ async function _runPickPhase() {
             }));
           })(pick);
         }
-      })(seats[si]);
+      })(seats[si], si * (30 / SPEED_MULTIPLIER));
     }
     await Promise.all(groupPromises);
-    // Brief pause between groups
     await new Promise(function(r) { setTimeout(r, 200 / SPEED_MULTIPLIER); });
   }
 
-  // Moon special case: opponents draw, then shuffler picks (if local), then widow
-  if (GAME_MODE === 'MOON') {
-    // Opponents draw simultaneously
-    await aiGroupPick(opponentSeats.filter(function(s) { return s !== localSeat; }), 'Opponents picking...');
-    // If local player is an opponent, they already picked above
-    // If local player is shuffler, remaining tiles are for them to pick
-    // (already handled by player pick phase above)
-
-    // Shuffler's remaining tiles auto-deal
-    if (dealerSeat !== localSeat) {
-      await aiGroupPick([dealerSeat], 'Shuffler picking...');
+  // Shuffler auto-gets remaining tiles
+  async function shufflerAutoGet() {
+    hint.textContent = 'Shuffler gets remaining tiles...';
+    counter.textContent = '';
+    var shufflerPick = 0;
+    var autoPromises = [];
+    for (var j = 0; j < pool.length; j++) {
+      if (!pool[j].picked) {
+        assignTileToSeat(pool[j], dealerSeat, shufflerPick);
+        var faceUp = (dealerSeat === localSeat);
+        autoPromises.push(animateTileToHand(pool[j], dealerSeat, shufflerPick, faceUp));
+        shufflerPick++;
+      }
     }
-  } else {
-    // Opponents draw simultaneously (skip local player — they already picked)
-    var aiOpponents = opponentSeats.filter(function(s) { return s !== localSeat; });
-    await aiGroupPick(aiOpponents, 'Opponents picking...');
-
-    // Partners draw simultaneously (skip local player)
-    var aiPartners = partnerSeats.filter(function(s) { return s !== localSeat; });
-    await aiGroupPick(aiPartners, 'Partner(s) picking...');
-
-    // Shuffler gets remaining tiles automatically (if not local player)
-    if (dealerSeat !== localSeat) {
-      hint.textContent = 'Shuffler gets remaining tiles...';
-      var shufflerPick = 0;
-      for (var j = 0; j < pool.length; j++) {
-        if (!pool[j].picked) {
-          assignTileToSeat(pool[j], dealerSeat, shufflerPick);
-          animateTileToHand(pool[j], dealerSeat, shufflerPick, false);
-          shufflerPick++;
+    await Promise.all(autoPromises);
+    if (dealerSeat === localSeat) {
+      // Attach gameplay handlers for shuffler's auto-dealt tiles
+      for (var si = 0; si < sprites[localSeat].length; si++) {
+        var sd = sprites[localSeat][si];
+        if (sd && sd.sprite) {
+          (function(sp) {
+            sp.addEventListener('click', function() { handlePlayer1Click(sp); });
+            sp.addEventListener('touchstart', function(ev) {
+              ev.preventDefault(); ev.stopPropagation();
+              handlePlayer1Click(sp);
+            }, { passive: false });
+          })(sd.sprite);
         }
       }
-      await new Promise(function(r) { setTimeout(r, (SP.dealSpeed + 100) / SPEED_MULTIPLIER); });
+    }
+    await new Promise(function(r) { setTimeout(r, 200 / SPEED_MULTIPLIER); });
+  }
+
+  // ── EXECUTE DRAW ORDER ──
+  // Group 1: Opponents of shuffler
+  var aiOpponents = opponentSeats.filter(function(s) { return s !== localSeat; });
+  if (localIsOpponent) {
+    // Local player picks at the same time as AI opponents
+    // Run player pick and AI opponent pick in parallel
+    await Promise.all([
+      playerPickPhase(),
+      aiGroupPick(aiOpponents, 'Opponents picking...')
+    ]);
+  } else {
+    await aiGroupPick(opponentSeats, 'Opponents picking...');
+  }
+
+  // Group 2: Partners of shuffler (not shuffler themselves)
+  var aiPartners = partnerSeats.filter(function(s) { return s !== localSeat; });
+  if (localIsPartner) {
+    await Promise.all([
+      playerPickPhase(),
+      aiGroupPick(aiPartners, 'Partner(s) picking...')
+    ]);
+  } else if (partnerSeats.length > 0) {
+    await aiGroupPick(partnerSeats, 'Partner(s) picking...');
+  }
+
+  // Group 3: Shuffler gets rest
+  if (localIsShuffler) {
+    // In Moon, shuffler picks manually; otherwise auto-get
+    if (GAME_MODE === 'MOON') {
+      await playerPickPhase();
+    } else {
+      await shufflerAutoGet();
+    }
+  } else {
+    if (GAME_MODE === 'MOON') {
+      await aiGroupPick([dealerSeat], 'Shuffler picking...');
+    } else {
+      await shufflerAutoGet();
     }
   }
 
