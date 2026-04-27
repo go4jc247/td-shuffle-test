@@ -16594,6 +16594,12 @@ var SHUFFLE_PHYSICS = {
   playbackStrength: 1.0,   // multiplier for AI/replay shuffle force (0.1=gentle, 2.0=strong)
   playbackSpeed: 1.0,      // speed multiplier for playback (0.5=slow, 2.0=fast)
   playbackShowFinger: true, // show ghost finger during replay
+
+  // ── Pick Phase / Pile Circles ──
+  pileDist: 0.70,           // 0=center, 1=at hand edge (fraction of center-to-hand distance)
+  pileRadius: 0.08,         // pile circle radius as fraction of min(W,H)
+  centerCircleRadius: 0.60, // center "DRAW" circle radius as fraction of areaRadius*H
+  skipFirstShuffle: true,   // skip shuffle animation on first round (tiles start scattered)
 };
 // Store defaults for Reset button
 var _shufflePhysicsDefaults = JSON.parse(JSON.stringify(SHUFFLE_PHYSICS));
@@ -17993,6 +17999,13 @@ function _createShuffleSettingsPanel(tableEl) {
   slider('Playback Speed', 'playbackSpeed', 0.3, 2.0, 0.1, 1);
   toggle('Show Finger', 'playbackShowFinger');
 
+  // ── Pick Phase / Pile Circles ──
+  section('Pick Phase');
+  slider('Pile Distance', 'pileDist', 0.2, 1.0, 0.05, 2);
+  slider('Pile Circle Size', 'pileRadius', 0.03, 0.20, 0.005, 3);
+  slider('Center Circle Size', 'centerCircleRadius', 0.2, 1.0, 0.05, 2);
+  toggle('Skip 1st Shuffle', 'skipFirstShuffle');
+
   // ── Save / Load ──
   section('Save / Load');
 
@@ -18175,6 +18188,39 @@ function _applyShuffleSettingsLive() {
         } else {
           sp._shadow.style.display = 'none';
         }
+      }
+    }
+  }
+  // Live-update pile circles during pick phase
+  var pickCircles = document.querySelectorAll('.pickPileCircle');
+  var centerCircle = document.getElementById('pickCenterCircle');
+  if (pickCircles.length > 0 || centerCircle) {
+    var rect2 = getRect();
+    var W2 = rect2.width, H2 = rect2.height;
+    var pr = Math.min(W2, H2) * SP.pileRadius;
+    var cr = H2 * SP.areaRadius * SP.centerCircleRadius;
+    var ccx = W2 * SP.centerXN, ccy = H2 * SP.centerYN;
+    if (centerCircle) {
+      centerCircle.style.width = (cr * 2) + 'px';
+      centerCircle.style.height = (cr * 2) + 'px';
+      centerCircle.style.left = (ccx - cr) + 'px';
+      centerCircle.style.top = (ccy - cr) + 'px';
+    }
+    for (var ci = 0; ci < pickCircles.length; ci++) {
+      var pc = pickCircles[ci];
+      var seat = parseInt(pc.dataset.seat);
+      // Recompute pile position with current settings
+      var hc = _pickPileHandCenters ? _pickPileHandCenters[seat] : null;
+      if (hc) {
+        var dx = hc.x - W2 / 2, dy = hc.y - H2 / 2;
+        var dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 1) { dx = 0; dy = 1; dist = 1; }
+        var px = W2 / 2 + dx * SP.pileDist;
+        var py = H2 / 2 + dy * SP.pileDist;
+        pc.style.width = (pr * 2) + 'px';
+        pc.style.height = (pr * 2) + 'px';
+        pc.style.left = (px - pr) + 'px';
+        pc.style.top = (py - pr) + 'px';
       }
     }
   }
@@ -19908,6 +19954,7 @@ async function _transitionRoundEnd() {
 // After shuffle, player clicks face-down tiles to pick their hand,
 // then AI picks going around the table. Tiles are ACTUALLY assigned here.
 var _shufflePickPool = []; // set by startNewHand
+var _pickPileHandCenters = null; // seat -> {x,y} for live settings update
 
 async function _runPickPhase() {
   const localSeat = getLocalSeat();
@@ -19967,6 +20014,22 @@ async function _runPickPhase() {
   counter.textContent = '0 / ' + handSize;
   tableEl.appendChild(counter);
 
+  // Small settings button — bottom-left, temporary for tuning
+  var pickSettingsBtn = document.createElement('button');
+  pickSettingsBtn.id = 'pickSettingsBtn';
+  pickSettingsBtn.textContent = '\u2699';
+  pickSettingsBtn.style.cssText = 'position:absolute;bottom:8px;left:8px;z-index:610;width:36px;height:36px;border-radius:50%;border:1px solid rgba(255,255,255,0.3);background:rgba(0,0,0,0.5);color:rgba(255,255,255,0.7);font-size:20px;cursor:pointer;line-height:36px;text-align:center;padding:0;';
+  pickSettingsBtn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    var panel = document.getElementById('shuffleSettingsPanel');
+    if (!panel) {
+      _createShuffleSettingsPanel(tableEl);
+      panel = document.getElementById('shuffleSettingsPanel');
+    }
+    panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
+  });
+  tableEl.appendChild(pickSettingsBtn);
+
   // Map pool entries to physics bodies
   for (var pi = 0; pi < pool.length; pi++) {
     pool[pi]._bodyIdx = _shufflePhysicsRealSprites.indexOf(pool[pi].sprite);
@@ -19992,8 +20055,8 @@ async function _runPickPhase() {
   var rect = getRect();
   var W = rect.width, H = rect.height;
   var centerCx = W * SP.centerXN, centerCy = H * SP.centerYN;
-  var pileRadius = Math.min(W, H) * 0.08; // pile circle size
-  var centerRadius = H * SP.areaRadius * 0.6; // undrawn center circle
+  var pileRadius = Math.min(W, H) * SP.pileRadius;
+  var centerRadius = H * SP.areaRadius * SP.centerCircleRadius;
 
   // Compute pile positions — each seat gets a circle near their edge
   var _pilePositions = {}; // seat -> { x, y }
@@ -20006,13 +20069,15 @@ async function _runPickPhase() {
     var dx = hc.x - W / 2, dy = hc.y - H / 2;
     var dist = Math.sqrt(dx * dx + dy * dy);
     if (dist < 1) { dx = 0; dy = 1; dist = 1; }
-    // Place pile 70% of the way from center to hand
-    var px = W / 2 + dx * 0.7;
-    var py = H / 2 + dy * 0.7;
+    // Place pile at pileDist fraction of the way from center to hand
+    var px = W / 2 + dx * SP.pileDist;
+    var py = H / 2 + dy * SP.pileDist;
     return { x: px, y: py };
   }
 
+  _pickPileHandCenters = {};
   for (var seat = 0; seat < playerCount; seat++) {
+    _pickPileHandCenters[seat] = getSeatHandCenter(seat);
     _pilePositions[seat] = _computePilePosition(seat);
     _pileTiles[seat] = [];
   }
@@ -20504,6 +20569,9 @@ async function _runPickPhase() {
   if (overlay.parentNode) overlay.remove();
   if (hint.parentNode) hint.remove();
   if (counter.parentNode) counter.remove();
+  if (pickSettingsBtn.parentNode) pickSettingsBtn.remove();
+  var _sPanel = document.getElementById('shuffleSettingsPanel');
+  if (_sPanel) _sPanel.remove();
 
   // Now tear down physics engine — all tiles are in their final positions
   _endShufflePhysics();
@@ -24584,8 +24652,16 @@ async function startNewHand(){
     }
   }
 
-  // V13.1: Physics shuffle phase
-  await performShuffleAnimation();
+  // V13.1: Physics shuffle phase — skip on first round if setting enabled
+  if (!_reusingSprites && SP.skipFirstShuffle) {
+    // Tiles are already scattered randomly — just start physics engine (no interactive shuffle)
+    _setShuffleTableUI(false);
+    _startShufflePhysics();
+    // Brief pause so tiles settle slightly
+    await new Promise(function(r) { setTimeout(r, 400 / SPEED_MULTIPLIER); });
+  } else {
+    await performShuffleAnimation();
+  }
 
   // V13.1: Pick phase — player picks tiles, then AI picks going around
   await _runPickPhase();
