@@ -16596,11 +16596,11 @@ var SHUFFLE_PHYSICS = {
   playbackShowFinger: true, // show ghost finger during replay
 
   // ── Pick Phase / Pile Circles ──
-  pileDist: 1.00,           // base distance from center circle edge outward (multiplier of centerRadius)
-  pileRadius: 0.16,         // pile circle radius as fraction of min(W,H)
-  centerCircleRadius: 0.45, // center "DRAW" circle radius as fraction of areaRadius*H
-  pileSeatDist: {},         // per-seat distance override (uses pileDist if not set)
-  pileSeatYOff: {},         // per-seat Y offset as fraction of H (-0.2 to 0.2)
+  pileDist: 0.20,
+  pileRadius: 0.21,
+  centerCircleRadius: 0.45,
+  pileSeatDist: {},
+  pileSeatYOff: {"0":0.165,"1":0.105,"2":-0.11,"3":-0.185,"4":-0.11,"5":0.105}
 };
 // Store defaults for Reset button
 var _shufflePhysicsDefaults = JSON.parse(JSON.stringify(SHUFFLE_PHYSICS));
