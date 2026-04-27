@@ -16619,12 +16619,21 @@ var _shufflePhysicsDefaults = JSON.parse(JSON.stringify(SHUFFLE_PHYSICS));
   } catch(e) {}
 })();
 
+var _skipShuffleAnimation = false;
+
 async function performShuffleAnimation() {
   // This is now a physics-driven interactive shuffle
   // Returns a promise that resolves when player clicks "Done" or gather completes
   return new Promise(function(resolve) {
     _shufflePhysicsResolve = resolve;
     _startShufflePhysics();
+
+    // Skip mode: tiles already scattered, just start physics and immediately end for pick
+    if (_skipShuffleAnimation) {
+      _skipShuffleAnimation = false;
+      setTimeout(function() { _endShuffleForPick(); }, 200);
+      return;
+    }
 
     // V13.1: If it's AI's turn to shuffle, auto-mix then auto-end
     var shufflerSeat = session.dealer;
@@ -24652,16 +24661,9 @@ async function startNewHand(){
     }
   }
 
-  // V13.1: Physics shuffle phase — skip on first round if setting enabled
-  if (!_reusingSprites && SP.skipFirstShuffle) {
-    // Tiles are already scattered randomly — just start physics engine (no interactive shuffle)
-    _setShuffleTableUI(false);
-    _startShufflePhysics();
-    // Brief pause so tiles settle slightly
-    await new Promise(function(r) { setTimeout(r, 400 / SPEED_MULTIPLIER); });
-  } else {
-    await performShuffleAnimation();
-  }
+  // V13.1: Physics shuffle phase
+  _skipShuffleAnimation = (!_reusingSprites && SP.skipFirstShuffle);
+  await performShuffleAnimation();
 
   // V13.1: Pick phase — player picks tiles, then AI picks going around
   await _runPickPhase();
