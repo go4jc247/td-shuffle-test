@@ -20321,20 +20321,20 @@ async function _runPickPhase() {
     var pos = _pilePositions[seat];
     _pileTiles[seat].push(entry);
 
-    // Tag the body with its pile seat — physics loop will contain it
+    // Tag the body with its pile seat — physics loop will contain it and pull it in
     if (entry._body) {
       entry._body._pileSeat = seat;
       // High friction so tiles settle quickly in the pile
       entry._body.friction = 0.8;
       entry._body.frictionAir = 0.15;
-      // Position it neatly inside the pile
-      var count = _pileTiles[seat].length;
-      var angle = (count - 1) * (Math.PI * 2 / Math.max(handSize, 1));
-      var dist = count <= 1 ? 0 : Math.min(pileRadius * 0.4, 15 + count * 3);
-      var tx = pos.x + Math.cos(angle) * dist;
-      var ty = pos.y + Math.sin(angle) * dist;
-      Matter.Body.setPosition(entry._body, { x: tx, y: ty });
-      Matter.Body.setVelocity(entry._body, { x: 0, y: 0 });
+      // Give it a gentle nudge toward pile center — physics does the rest
+      var dx = pos.x - entry._body.position.x;
+      var dy = pos.y - entry._body.position.y;
+      var d = Math.sqrt(dx * dx + dy * dy);
+      if (d > 1) {
+        var speed = Math.min(d * 0.15, 8);
+        Matter.Body.setVelocity(entry._body, { x: dx / d * speed, y: dy / d * speed });
+      }
       Matter.Body.setAngularVelocity(entry._body, 0);
     }
   }
