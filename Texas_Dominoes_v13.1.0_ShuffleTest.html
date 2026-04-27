@@ -20193,6 +20193,7 @@ async function _runPickPhase() {
             }
             if (available.length === 0) break;
             var entry = available[Math.floor(Math.random() * available.length)];
+            entry.picked = true; // Mark immediately to prevent race with parallel seats
             var body = entry._body;
 
             // Slide tile toward seat using physics constraint
@@ -20236,6 +20237,7 @@ async function _runPickPhase() {
     for (var j = 0; j < pool.length; j++) {
       if (!pool[j].picked && pool[j]._body && !pool[j]._body.isStatic) {
         var entry = pool[j];
+        entry.picked = true; // Mark immediately
         var body = entry._body;
         var constraint = grabBody(body, body.position.x, body.position.y);
         var startX = body.position.x, startY = body.position.y;
