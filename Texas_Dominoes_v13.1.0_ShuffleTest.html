@@ -16600,7 +16600,8 @@ var SHUFFLE_PHYSICS = {
   pileRadius: 0.21,
   centerCircleRadius: 0.45,
   pileSeatDist: {},
-  pileSeatYOff: {"0":0.165,"1":0.105,"2":-0.11,"3":-0.185,"4":-0.11,"5":0.105}
+  pileSeatYOff: {"0":0.165,"1":0.105,"2":-0.11,"3":-0.185,"4":-0.11,"5":0.105},
+  pickAnimSpeed: 1.0        // pick phase animation speed multiplier (0.3=slow, 2.0=fast)
 };
 // Store defaults for Reset button
 var _shufflePhysicsDefaults = JSON.parse(JSON.stringify(SHUFFLE_PHYSICS));
@@ -20077,6 +20078,7 @@ async function _runPickPhase() {
     }
   });
   _pileSlider(pilePanel, 'Pile Size', SP.pileRadius, 0.03, 0.25, 0.005, 3, function(v) { SP.pileRadius = v; });
+  _pileSlider(pilePanel, 'Anim Speed', SP.pickAnimSpeed, 0.1, 2.0, 0.05, 2, function(v) { SP.pickAnimSpeed = v; });
 
   // ── Per-seat sliders ──
   _pileSection('Individual Piles');
@@ -20120,7 +20122,8 @@ async function _runPickPhase() {
       pileDist: SP.pileDist,
       pileRadius: SP.pileRadius,
       pileSeatDist: JSON.parse(JSON.stringify(SP.pileSeatDist)),
-      pileSeatYOff: JSON.parse(JSON.stringify(SP.pileSeatYOff))
+      pileSeatYOff: JSON.parse(JSON.stringify(SP.pileSeatYOff)),
+      pickAnimSpeed: SP.pickAnimSpeed
     };
     var json = JSON.stringify(out, null, 2);
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -20277,21 +20280,31 @@ async function _runPickPhase() {
   function snapTileToPile(entry, seat) {
     var pos = _pilePositions[seat];
     _pileTiles[seat].push(entry);
-    var count = _pileTiles[seat].length;
-    // Arrange in a small cluster within the pile circle
-    var angle = (count - 1) * (Math.PI * 2 / Math.max(handSize, 1)) + Math.random() * 0.3;
-    var dist = Math.min(pileRadius * 0.6, count * 4);
-    var tx = pos.x + Math.cos(angle) * dist;
-    var ty = pos.y + Math.sin(angle) * dist;
 
-    if (entry._body) {
-      Matter.Body.setStatic(entry._body, true);
-      Matter.Body.setPosition(entry._body, { x: tx, y: ty });
-      Matter.Body.setAngle(entry._body, Math.random() * Math.PI * 0.3);
-      Matter.Body.setVelocity(entry._body, { x: 0, y: 0 });
+    // Remove physics body so it can't collide with incoming tiles
+    if (entry._body && _shufflePhysicsEngine) {
+      Matter.World.remove(_shufflePhysicsEngine.world, entry._body);
+      entry._bodyRemoved = true;
     }
-    entry.sprite.classList.remove('shuffleSimple');
-    entry.sprite.setPose({ x: tx - 28, y: ty - 56, s: SP.tileScale, rz: Math.random() * 15 - 7, ry: 0 });
+
+    // Rearrange ALL tiles in this pile to make room
+    _arrangePileLayout(seat);
+  }
+
+  function _arrangePileLayout(seat) {
+    var tiles = _pileTiles[seat];
+    var pos = _pilePositions[seat];
+    var count = tiles.length;
+    for (var i = 0; i < count; i++) {
+      var angle = i * (Math.PI * 2 / Math.max(handSize, 1));
+      var dist = count <= 1 ? 0 : Math.min(pileRadius * 0.5, 20 + count * 3);
+      var tx = pos.x + Math.cos(angle) * dist;
+      var ty = pos.y + Math.sin(angle) * dist;
+      var rz = Math.random() * 15 - 7;
+      var e = tiles[i];
+      e.sprite.classList.remove('shuffleSimple');
+      e.sprite.setPose({ x: tx - 28, y: ty - 56, s: SP.tileScale, rz: rz, ry: 0 });
+    }
   }
 
   // After all picking, move tiles from piles to final hand positions
@@ -20314,7 +20327,7 @@ async function _runPickPhase() {
         // Animate from pile to hand
         var faceUp = isLocal;
         (function(sp, tp, fu, body) {
-          var speed = 600 / SPEED_MULTIPLIER;
+          var speed = 600 / (SPEED_MULTIPLIER * SP.pickAnimSpeed);
           arrangePromises.push(animateSprite(sp, {
             x: tp.x, y: tp.y, s: tp.s, rz: tp.rz, ry: fu ? 180 : 0
           }, speed).then(function() {
@@ -20555,7 +20568,7 @@ async function _runPickPhase() {
     var constraint = grabBody(body, body.position.x, body.position.y);
     var startX = body.position.x, startY = body.position.y;
     var targetX = seatCenter.x, targetY = seatCenter.y;
-    var slideDuration = (400 + Math.random() * 200) / SPEED_MULTIPLIER;
+    var slideDuration = (400 + Math.random() * 200) / (SPEED_MULTIPLIER * SP.pickAnimSpeed);
     var slideStart = performance.now();
 
     // Create ghost finger circle
@@ -20631,7 +20644,7 @@ async function _runPickPhase() {
             var entry = available[Math.floor(Math.random() * available.length)];
             entry.picked = true; // claim immediately — other seats see this
             await slideTileToSeat(entry, aiSeat, pick, center, color);
-            await new Promise(function(r) { setTimeout(r, (40 + Math.random() * 60) / SPEED_MULTIPLIER); });
+            await new Promise(function(r) { setTimeout(r, (40 + Math.random() * 60) / (SPEED_MULTIPLIER * SP.pickAnimSpeed)); });
           }
         })());
       })(seats[si]);
@@ -20640,7 +20653,7 @@ async function _runPickPhase() {
 
     var ghosts = document.querySelectorAll('.aiPickGhost');
     for (var gi = 0; gi < ghosts.length; gi++) ghosts[gi].remove();
-    await new Promise(function(r) { setTimeout(r, 300 / SPEED_MULTIPLIER); });
+    await new Promise(function(r) { setTimeout(r, 300 / (SPEED_MULTIPLIER * SP.pickAnimSpeed)); });
   }
 
   // Shuffler auto-gets remaining tiles — sweep via physics
@@ -20659,7 +20672,7 @@ async function _runPickPhase() {
     }
     var ghosts = document.querySelectorAll('.aiPickGhost');
     for (var gi = 0; gi < ghosts.length; gi++) ghosts[gi].remove();
-    await new Promise(function(r) { setTimeout(r, 200 / SPEED_MULTIPLIER); });
+    await new Promise(function(r) { setTimeout(r, 200 / (SPEED_MULTIPLIER * SP.pickAnimSpeed)); });
   }
 
   // ── EXECUTE DRAW ORDER ──
@@ -20706,7 +20719,7 @@ async function _runPickPhase() {
   // ── ARRANGE: animate tiles from pile circles to final hand positions ──
   await _arrangePilesToHands();
   // Brief pause so pile circles stay visible during animation
-  await new Promise(function(r) { setTimeout(r, 500 / SPEED_MULTIPLIER); });
+  await new Promise(function(r) { setTimeout(r, 500 / (SPEED_MULTIPLIER * SP.pickAnimSpeed)); });
   _removePileCircles();
 
   // ── FINALIZE: inject picked hands into the game engine ──
@@ -20723,7 +20736,7 @@ async function _runPickPhase() {
   _endShufflePhysics();
 
   // Brief pause before UI comes back
-  await new Promise(function(r) { setTimeout(r, 300 / SPEED_MULTIPLIER); });
+  await new Promise(function(r) { setTimeout(r, 300 / (SPEED_MULTIPLIER * SP.pickAnimSpeed)); });
 
   // Tiles are in place — now fade UI back in
   _setShuffleTableUI(true);
