@@ -16696,7 +16696,7 @@ function _playRecording(rec, cx, cy, r, ptr) {
   var ghostEl = (_shuffleSandboxActive && SP.playbackShowFinger) ? true : null;
 
   var playTimer = setInterval(function() {
-    if (!_shufflePhysicsActive) {
+    if (!_shufflePhysicsActive || !_sandboxPlaybackActive) {
       clearInterval(playTimer); _sandboxPlaybackActive = false;
       var ek = Object.keys(_shuffleTouchPointers);
       for (var ei = 0; ei < ek.length; ei++) { if (ek[ei].indexOf('_pb') === 0) delete _shuffleTouchPointers[ek[ei]]; }
@@ -16902,7 +16902,7 @@ function _proceduralMix(cx, cy, r, ptr) {
   var angle = Math.random() * Math.PI * 2;
   var prevX = cx, prevY = cy;
   var mixTimer = setInterval(function() {
-    if (!_shufflePhysicsActive) { clearInterval(mixTimer); return; }
+    if (!_shufflePhysicsActive || !_sandboxPlaybackActive) { clearInterval(mixTimer); ptr.active = false; return; }
     elapsed += interval;
     var t = elapsed / duration;
     var loopSpeed = 3 + t * 2;
@@ -18203,6 +18203,8 @@ function _applyShuffleSettingsLive() {
 // Soft end: remove shuffle UI, resolve promise, but keep physics alive for pick phase
 function _endShuffleForPick() {
   _shuffleGatherActive = false;
+  _sandboxPlaybackActive = false; // stop any recording playback
+  _shufflePhysicsPointer.active = false;
 
   // Remove shuffle UI only
   var btnBar = document.getElementById('shuffleBtnBar');
