@@ -20024,7 +20024,7 @@ async function _runPickPhase() {
   // Pile position tuning panel — semi-transparent, bottom-left, scrollable
   var pilePanel = document.createElement('div');
   pilePanel.id = 'pileSettingsPanel';
-  pilePanel.style.cssText = 'position:absolute;bottom:6px;left:6px;z-index:610;background:rgba(0,0,0,0.35);border:1px solid rgba(255,255,255,0.15);border-radius:10px;padding:10px 14px;font-family:system-ui,sans-serif;color:rgba(255,255,255,0.85);font-size:11px;pointer-events:auto;min-width:210px;max-height:70vh;overflow-y:auto;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);';
+  pilePanel.style.cssText = 'position:absolute;bottom:6px;left:6px;z-index:610;background:rgba(0,0,0,0.15);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:10px 14px;font-family:system-ui,sans-serif;color:rgba(255,255,255,0.85);font-size:11px;pointer-events:auto;min-width:210px;max-height:70vh;overflow-y:auto;';
 
   function _pileSlider(container, label, initVal, min, max, step, decimals, onChange) {
     var row = document.createElement('div');
