@@ -16530,8 +16530,8 @@ var _shuffleGatherRampMs = 2000; // ms to ramp from 0 to full gather force
 // Physics settings — calibrated from Jason's phone testing (Apr 2026)
 var SHUFFLE_PHYSICS = {
   // ── Area ──
-  centerXN: 0.50,
-  centerYN: 0.50,
+  centerXN: 0.515,
+  centerYN: 0.63,
   areaRadius: 0.37,
   showArea: true,
   areaOpacity: 0.25,
@@ -16599,9 +16599,9 @@ var SHUFFLE_PHYSICS = {
   pileDist: 0.20,
   pileRadius: 0.21,
   centerCircleRadius: 0.45,
-  pileSeatDist: {},
-  pileSeatYOff: {"0":0.165,"1":0.105,"2":-0.11,"3":-0.185,"4":-0.11,"5":0.105},
-  pickAnimSpeed: 0.25       // pick phase animation speed multiplier (0.1=slow, 2.0=fast)
+  pileSeatDist: {"0":0.45,"1":0.25,"5":0.25},
+  pileSeatYOff: {"0":0.05,"1":0.095,"2":-0.23,"3":-0.1,"4":-0.11,"5":0.1},
+  pickAnimSpeed: 1.0        // pick phase animation speed multiplier (0.1=slow, 2.0=fast)
 };
 // Store defaults for Reset button
 var _shufflePhysicsDefaults = JSON.parse(JSON.stringify(SHUFFLE_PHYSICS));
