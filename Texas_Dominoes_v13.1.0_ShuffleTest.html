@@ -20679,30 +20679,41 @@ async function _runPickPhase() {
       seatPicks[seats[si]] = 0;
     }
 
-    // Pick tiles one at a time per seat, all seats in parallel
-    // Each seat claims a tile just before sliding it (not pre-assigned)
-    var slidePromises = [];
+    // Pick tiles with overlapping grabs — like using two hands efficiently
+    // Each seat fires off slides without waiting for each to finish
+    var allSlides = [];
     for (var si = 0; si < seats.length; si++) {
       (function(aiSeat) {
         var color = AI_SEAT_COLORS[aiSeat % AI_SEAT_COLORS.length];
         var center = seatCenters[aiSeat];
-        slidePromises.push((async function() {
-          for (var pick = 0; pick < handSize; pick++) {
-            // Claim one tile right before sliding it
-            var available = [];
-            for (var j = 0; j < pool.length; j++) {
-              if (!pool[j].picked && pool[j]._body && !pool[j]._body.isStatic) available.push(pool[j]);
+        var picked = 0;
+        allSlides.push((async function() {
+          while (picked < handSize) {
+            // Grab 1-2 tiles at once (like two hands)
+            var grabCount = (Math.random() < 0.4 && picked < handSize - 1) ? 2 : 1;
+            var grabSlides = [];
+            for (var g = 0; g < grabCount && picked < handSize; g++) {
+              var available = [];
+              for (var j = 0; j < pool.length; j++) {
+                if (!pool[j].picked && pool[j]._body && !pool[j]._body.isStatic) available.push(pool[j]);
+              }
+              if (available.length === 0) break;
+              var entry = available[Math.floor(Math.random() * available.length)];
+              entry.picked = true;
+              grabSlides.push(slideTileToSeat(entry, aiSeat, picked, center, color));
+              picked++;
+              // Tiny stagger between hands (50-100ms)
+              if (g === 0 && grabCount > 1) {
+                await new Promise(function(r) { setTimeout(r, (50 + Math.random() * 50) / (SPEED_MULTIPLIER * SP.pickAnimSpeed)); });
+              }
             }
-            if (available.length === 0) break;
-            var entry = available[Math.floor(Math.random() * available.length)];
-            entry.picked = true; // claim immediately — other seats see this
-            await slideTileToSeat(entry, aiSeat, pick, center, color);
-            await new Promise(function(r) { setTimeout(r, (40 + Math.random() * 60) / (SPEED_MULTIPLIER * SP.pickAnimSpeed)); });
+            // Don't wait for slides to fully finish — just a brief pause before next grab
+            await new Promise(function(r) { setTimeout(r, (120 + Math.random() * 80) / (SPEED_MULTIPLIER * SP.pickAnimSpeed)); });
           }
         })());
       })(seats[si]);
     }
-    await Promise.all(slidePromises);
+    await Promise.all(allSlides);
 
     var ghosts = document.querySelectorAll('.aiPickGhost');
     for (var gi = 0; gi < ghosts.length; gi++) ghosts[gi].remove();
@@ -20717,11 +20728,16 @@ async function _runPickPhase() {
     var shufflerPick = 0;
     var faceUp = (dealerSeat === localSeat);
     var color = AI_SEAT_COLORS[dealerSeat % AI_SEAT_COLORS.length];
+    // Grab remaining tiles quickly — overlapping, two-handed
+    var remaining = [];
     for (var j = 0; j < pool.length; j++) {
-      if (!pool[j].picked && pool[j]._body && !pool[j]._body.isStatic) {
-        await slideTileToSeat(pool[j], dealerSeat, shufflerPick, shufflerCenter, color);
-        shufflerPick++;
-      }
+      if (!pool[j].picked && pool[j]._body && !pool[j]._body.isStatic) remaining.push(pool[j]);
+    }
+    for (var ri = 0; ri < remaining.length; ri++) {
+      slideTileToSeat(remaining[ri], dealerSeat, shufflerPick, shufflerCenter, color);
+      shufflerPick++;
+      // Stagger each grab slightly
+      await new Promise(function(r) { setTimeout(r, (80 + Math.random() * 60) / (SPEED_MULTIPLIER * SP.pickAnimSpeed)); });
     }
     var ghosts = document.querySelectorAll('.aiPickGhost');
     for (var gi = 0; gi < ghosts.length; gi++) ghosts[gi].remove();
