@@ -20698,6 +20698,7 @@ async function _runPickPhase() {
             rem -= gc;
           }
           var gap = totalTime / grabs.length;
+          var slidePs = []; // collect all slide promises
           for (var gi = 0; gi < grabs.length; gi++) {
             var grabCount = grabs[gi];
             for (var g = 0; g < grabCount; g++) {
@@ -20708,7 +20709,7 @@ async function _runPickPhase() {
               if (available.length === 0) break;
               var entry = available[Math.floor(Math.random() * available.length)];
               entry.picked = true;
-              slideTileToSeat(entry, aiSeat, picked, center, color);
+              slidePs.push(slideTileToSeat(entry, aiSeat, picked, center, color));
               picked++;
               // Tiny stagger between two-handed grabs
               if (g === 0 && grabCount > 1) {
@@ -20720,6 +20721,8 @@ async function _runPickPhase() {
               await new Promise(function(r) { setTimeout(r, gap * (0.7 + Math.random() * 0.6)); });
             }
           }
+          // Wait for all slides to fully arrive — no stranded tiles
+          await Promise.all(slidePs);
         })());
       })(seats[si]);
     }
@@ -20738,20 +20741,23 @@ async function _runPickPhase() {
     var shufflerPick = 0;
     var faceUp = (dealerSeat === localSeat);
     var color = AI_SEAT_COLORS[dealerSeat % AI_SEAT_COLORS.length];
-    // Grab remaining tiles — spread across 3-5 seconds
+    // Grab remaining tiles — spread across 3-5 seconds, wait for ALL to arrive
     var remaining = [];
     for (var j = 0; j < pool.length; j++) {
       if (!pool[j].picked && pool[j]._body && !pool[j]._body.isStatic) remaining.push(pool[j]);
     }
     var sweepTime = (3000 + Math.random() * 2000) / (SPEED_MULTIPLIER * SP.pickAnimSpeed);
     var sweepGap = remaining.length > 1 ? sweepTime / remaining.length : 500;
+    var sweepSlides = [];
     for (var ri = 0; ri < remaining.length; ri++) {
-      slideTileToSeat(remaining[ri], dealerSeat, shufflerPick, shufflerCenter, color);
+      sweepSlides.push(slideTileToSeat(remaining[ri], dealerSeat, shufflerPick, shufflerCenter, color));
       shufflerPick++;
       if (ri < remaining.length - 1) {
         await new Promise(function(r) { setTimeout(r, sweepGap * (0.7 + Math.random() * 0.6)); });
       }
     }
+    // Wait for every slide to fully complete — no stranded tiles
+    await Promise.all(sweepSlides);
     var ghosts = document.querySelectorAll('.aiPickGhost');
     for (var gi = 0; gi < ghosts.length; gi++) ghosts[gi].remove();
     await new Promise(function(r) { setTimeout(r, 200 / (SPEED_MULTIPLIER * SP.pickAnimSpeed)); });
