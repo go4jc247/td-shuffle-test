@@ -20621,7 +20621,7 @@ async function _runPickPhase() {
     var constraint = grabBody(body, body.position.x, body.position.y);
     var startX = body.position.x, startY = body.position.y;
     var targetX = seatCenter.x, targetY = seatCenter.y;
-    var slideDuration = (400 + Math.random() * 200) / (SPEED_MULTIPLIER * SP.pickAnimSpeed);
+    var slideDuration = (800 + Math.random() * 400) / (SPEED_MULTIPLIER * SP.pickAnimSpeed);
     var slideStart = performance.now();
 
     // Create ghost finger circle
@@ -20679,8 +20679,9 @@ async function _runPickPhase() {
       seatPicks[seats[si]] = 0;
     }
 
-    // Pick tiles with overlapping grabs — like using two hands efficiently
-    // Each seat fires off slides without waiting for each to finish
+    // Each AI seat takes 3-5 seconds total, grabs spread across that window
+    // Sometimes grabs 2 at once (two hands), with natural timing variation
+    var totalTime = (3000 + Math.random() * 2000) / (SPEED_MULTIPLIER * SP.pickAnimSpeed);
     var allSlides = [];
     for (var si = 0; si < seats.length; si++) {
       (function(aiSeat) {
@@ -20688,11 +20689,18 @@ async function _runPickPhase() {
         var center = seatCenters[aiSeat];
         var picked = 0;
         allSlides.push((async function() {
-          while (picked < handSize) {
-            // Grab 1-2 tiles at once (like two hands)
-            var grabCount = (Math.random() < 0.4 && picked < handSize - 1) ? 2 : 1;
-            var grabSlides = [];
-            for (var g = 0; g < grabCount && picked < handSize; g++) {
+          // Spread grabs across totalTime — figure out how many grab events
+          var grabs = [];
+          var rem = handSize;
+          while (rem > 0) {
+            var gc = (Math.random() < 0.35 && rem >= 2) ? 2 : 1;
+            grabs.push(gc);
+            rem -= gc;
+          }
+          var gap = totalTime / grabs.length;
+          for (var gi = 0; gi < grabs.length; gi++) {
+            var grabCount = grabs[gi];
+            for (var g = 0; g < grabCount; g++) {
               var available = [];
               for (var j = 0; j < pool.length; j++) {
                 if (!pool[j].picked && pool[j]._body && !pool[j]._body.isStatic) available.push(pool[j]);
@@ -20700,15 +20708,17 @@ async function _runPickPhase() {
               if (available.length === 0) break;
               var entry = available[Math.floor(Math.random() * available.length)];
               entry.picked = true;
-              grabSlides.push(slideTileToSeat(entry, aiSeat, picked, center, color));
+              slideTileToSeat(entry, aiSeat, picked, center, color);
               picked++;
-              // Tiny stagger between hands (50-100ms)
+              // Tiny stagger between two-handed grabs
               if (g === 0 && grabCount > 1) {
-                await new Promise(function(r) { setTimeout(r, (50 + Math.random() * 50) / (SPEED_MULTIPLIER * SP.pickAnimSpeed)); });
+                await new Promise(function(r) { setTimeout(r, 80 + Math.random() * 120); });
               }
             }
-            // Don't wait for slides to fully finish — just a brief pause before next grab
-            await new Promise(function(r) { setTimeout(r, (120 + Math.random() * 80) / (SPEED_MULTIPLIER * SP.pickAnimSpeed)); });
+            // Wait before next grab — spread across total time with some jitter
+            if (gi < grabs.length - 1) {
+              await new Promise(function(r) { setTimeout(r, gap * (0.7 + Math.random() * 0.6)); });
+            }
           }
         })());
       })(seats[si]);
@@ -20728,16 +20738,19 @@ async function _runPickPhase() {
     var shufflerPick = 0;
     var faceUp = (dealerSeat === localSeat);
     var color = AI_SEAT_COLORS[dealerSeat % AI_SEAT_COLORS.length];
-    // Grab remaining tiles quickly — overlapping, two-handed
+    // Grab remaining tiles — spread across 3-5 seconds
     var remaining = [];
     for (var j = 0; j < pool.length; j++) {
       if (!pool[j].picked && pool[j]._body && !pool[j]._body.isStatic) remaining.push(pool[j]);
     }
+    var sweepTime = (3000 + Math.random() * 2000) / (SPEED_MULTIPLIER * SP.pickAnimSpeed);
+    var sweepGap = remaining.length > 1 ? sweepTime / remaining.length : 500;
     for (var ri = 0; ri < remaining.length; ri++) {
       slideTileToSeat(remaining[ri], dealerSeat, shufflerPick, shufflerCenter, color);
       shufflerPick++;
-      // Stagger each grab slightly
-      await new Promise(function(r) { setTimeout(r, (80 + Math.random() * 60) / (SPEED_MULTIPLIER * SP.pickAnimSpeed)); });
+      if (ri < remaining.length - 1) {
+        await new Promise(function(r) { setTimeout(r, sweepGap * (0.7 + Math.random() * 0.6)); });
+      }
     }
     var ghosts = document.querySelectorAll('.aiPickGhost');
     for (var gi = 0; gi < ghosts.length; gi++) ghosts[gi].remove();
