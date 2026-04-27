@@ -16938,7 +16938,8 @@ function _setShuffleTableUI(visible) {
   // Hide everything inside tableMain EXCEPT spriteLayer, shadowLayer, and shuffle UI
   var keepVisible = { 'spriteLayer':1, 'shadowLayer':1, 'shufflePhysicsOverlay':1,
     'shuffleBtnBar':1, 'shuffleHint':1, 'shuffleAreaRing':1, 'shuffleSettingsPanel':1,
-    'pickPhaseOverlay':1, 'pickHint':1, 'pickCounter':1 };
+    'pickPhaseOverlay':1, 'pickHint':1, 'pickCounter':1, 'pickSpeedBtn':1,
+    'pileSettingsPanel':1, 'pickCenterCircle':1 };
   var tableMain = document.getElementById('tableMain');
   if (tableMain) {
     for (var i = 0; i < tableMain.children.length; i++) {
@@ -16952,7 +16953,7 @@ function _setShuffleTableUI(visible) {
   }
 
   // Also hide elements outside tableMain
-  var outerEls = ['topbar', 'statusBar', 'trumpDisplay'];
+  var outerEls = ['statusBar', 'trumpDisplay'];
   for (var i = 0; i < outerEls.length; i++) {
     var el = document.getElementById(outerEls[i]);
     if (el) {
@@ -20865,14 +20866,18 @@ async function _runPickPhase() {
     }
   }
 
-  // Shut down physics before arrange — all tiles are out of the world already
-  _endShufflePhysics();
+  // Stop physics loop but DON'T reset sprites (we animate them ourselves)
+  _shufflePhysicsActive = false;
+  if (_shufflePhysicsRAF) { cancelAnimationFrame(_shufflePhysicsRAF); _shufflePhysicsRAF = null; }
 
   // ── ARRANGE: animate tiles from pile circles to final hand positions ──
   await _arrangePilesToHands();
   // Brief pause so pile circles stay visible during animation
   await new Promise(function(r) { setTimeout(r, 500 / (SPEED_MULTIPLIER * SP.pickAnimSpeed)); });
   _removePileCircles();
+
+  // Now fully tear down physics engine
+  _endShufflePhysics();
 
   // ── FINALIZE: inject picked hands into the game engine ──
   session.game.set_hands(pickedHands, 0);
