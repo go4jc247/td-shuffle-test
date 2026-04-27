@@ -16596,9 +16596,10 @@ var SHUFFLE_PHYSICS = {
   playbackShowFinger: true, // show ghost finger during replay
 
   // ── Pick Phase / Pile Circles ──
-  pileDist: 1.50,           // 0=center, 1=at hand edge, >1=past hand edge
+  pileDist: 1.00,           // base distance from center circle edge outward (multiplier of centerRadius)
   pileRadius: 0.16,         // pile circle radius as fraction of min(W,H)
   centerCircleRadius: 0.45, // center "DRAW" circle radius as fraction of areaRadius*H
+  pileSeatDist: {},         // per-seat distance override (seat index -> multiplier)
 };
 // Store defaults for Reset button
 var _shufflePhysicsDefaults = JSON.parse(JSON.stringify(SHUFFLE_PHYSICS));
@@ -19947,10 +19948,33 @@ async function _runPickPhase() {
   if (ring) ring.remove();
   var settingsPanel = document.getElementById('shuffleSettingsPanel');
   if (settingsPanel) settingsPanel.remove();
-  // Stop gather, boundary force, and pointer force — only constraints during pick
+  // Gather tiles into center circle before pick phase
+  _shufflePhysicsPointer.active = false;
+  _shuffleGatherActive = true;
+  _shuffleAreaCenter.r = getRect().height * SP.areaRadius * SP.centerCircleRadius; // shrink boundary to center circle
+  // Wait for tiles to gather into the center circle
+  await new Promise(function(resolve) {
+    var gatherStart = performance.now();
+    var gatherCheck = setInterval(function() {
+      var elapsed = performance.now() - gatherStart;
+      // Check if tiles are mostly inside center circle, or timeout after 2s
+      if (elapsed > 2000 / SPEED_MULTIPLIER) {
+        clearInterval(gatherCheck);
+        resolve();
+      } else {
+        var allInside = true;
+        var cr2 = _shuffleAreaCenter.r * 0.9;
+        for (var bi = 0; bi < _shufflePhysicsBodies.length; bi++) {
+          var b = _shufflePhysicsBodies[bi];
+          var bdx = b.position.x - _shuffleAreaCenter.x, bdy = b.position.y - _shuffleAreaCenter.y;
+          if (Math.sqrt(bdx * bdx + bdy * bdy) > cr2) { allInside = false; break; }
+        }
+        if (allInside) { clearInterval(gatherCheck); resolve(); }
+      }
+    }, 100);
+  });
   _shuffleGatherActive = false;
   _shuffleAreaCenter.r = 0; // disables boundary push-back force
-  _shufflePhysicsPointer.active = false; // disables pointer force field
 
   // Remove old overlay and create a fresh one for pick phase
   var tableEl = document.getElementById('tableMain');
@@ -19979,14 +20003,14 @@ async function _runPickPhase() {
   counter.textContent = '0 / ' + handSize;
   tableEl.appendChild(counter);
 
-  // Pile position tuning panel — semi-transparent, bottom-left
+  // Pile position tuning panel — semi-transparent, bottom-left, scrollable
   var pilePanel = document.createElement('div');
   pilePanel.id = 'pileSettingsPanel';
-  pilePanel.style.cssText = 'position:absolute;bottom:6px;left:6px;z-index:610;background:rgba(0,0,0,0.35);border:1px solid rgba(255,255,255,0.15);border-radius:10px;padding:10px 14px;font-family:system-ui,sans-serif;color:rgba(255,255,255,0.85);font-size:11px;pointer-events:auto;min-width:200px;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);';
+  pilePanel.style.cssText = 'position:absolute;bottom:6px;left:6px;z-index:610;background:rgba(0,0,0,0.35);border:1px solid rgba(255,255,255,0.15);border-radius:10px;padding:10px 14px;font-family:system-ui,sans-serif;color:rgba(255,255,255,0.85);font-size:11px;pointer-events:auto;min-width:210px;max-height:70vh;overflow-y:auto;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);';
 
-  function _pileSlider(label, key, min, max, step, decimals) {
+  function _pileSlider(container, label, initVal, min, max, step, decimals, onChange) {
     var row = document.createElement('div');
-    row.style.cssText = 'margin-bottom:8px;';
+    row.style.cssText = 'margin-bottom:6px;';
     var top = document.createElement('div');
     top.style.cssText = 'display:flex;justify-content:space-between;margin-bottom:2px;';
     var lbl = document.createElement('span');
@@ -19994,31 +20018,76 @@ async function _runPickPhase() {
     lbl.textContent = label;
     var val = document.createElement('span');
     val.style.cssText = 'color:rgba(80,210,110,0.95);font-size:10px;font-weight:bold;min-width:36px;text-align:right;';
-    val.textContent = Number(SP[key]).toFixed(decimals);
+    val.textContent = Number(initVal).toFixed(decimals);
     top.appendChild(lbl); top.appendChild(val);
     var sl = document.createElement('input');
-    sl.type = 'range'; sl.min = min; sl.max = max; sl.step = step; sl.value = SP[key];
+    sl.type = 'range'; sl.min = min; sl.max = max; sl.step = step; sl.value = initVal;
     sl.style.cssText = 'width:100%;-webkit-appearance:none;height:3px;background:rgba(255,255,255,0.2);border-radius:2px;outline:none;cursor:pointer;';
     sl.addEventListener('input', function() {
-      SP[key] = parseFloat(sl.value);
-      val.textContent = Number(SP[key]).toFixed(decimals);
+      var v = parseFloat(sl.value);
+      val.textContent = v.toFixed(decimals);
+      onChange(v);
       _updatePileCirclesLive();
     });
     row.appendChild(top); row.appendChild(sl);
-    pilePanel.appendChild(row);
+    container.appendChild(row);
     return sl;
   }
 
+  // Section helper
+  function _pileSection(label, color) {
+    var sec = document.createElement('div');
+    sec.style.cssText = 'color:' + (color || 'rgba(255,255,255,0.4)') + ';font-size:8px;letter-spacing:0.14em;text-transform:uppercase;margin:8px 0 4px;font-weight:700;';
+    sec.textContent = label;
+    pilePanel.appendChild(sec);
+  }
+
+  // Title + close
   var pileTitle = document.createElement('div');
-  pileTitle.style.cssText = 'font-size:10px;font-weight:800;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.5);margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;';
+  pileTitle.style.cssText = 'font-size:10px;font-weight:800;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.5);margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;';
   pileTitle.innerHTML = 'Pile Positions <span id="pilePanelClose" style="cursor:pointer;font-size:14px;color:rgba(255,255,255,0.4);line-height:1;">\u2715</span>';
   pilePanel.appendChild(pileTitle);
 
-  _pileSlider('Pile Distance', 'pileDist', 0.1, 2.0, 0.02, 2);
-  _pileSlider('Pile Size', 'pileRadius', 0.03, 0.25, 0.005, 3);
-  _pileSlider('Center Circle Size', 'centerCircleRadius', 0.2, 1.2, 0.05, 2);
-  _pileSlider('Center X', 'centerXN', 0.1, 0.9, 0.005, 3);
-  _pileSlider('Center Y', 'centerYN', 0.1, 0.9, 0.005, 3);
+  // ── Global sliders ──
+  _pileSection('Center Circle');
+  _pileSlider(pilePanel, 'Center Size', SP.centerCircleRadius, 0.2, 1.2, 0.05, 2, function(v) { SP.centerCircleRadius = v; });
+  _pileSlider(pilePanel, 'Center X', SP.centerXN, 0.1, 0.9, 0.005, 3, function(v) { SP.centerXN = v; });
+  _pileSlider(pilePanel, 'Center Y', SP.centerYN, 0.1, 0.9, 0.005, 3, function(v) { SP.centerYN = v; });
+
+  _pileSection('All Piles');
+  _pileSlider(pilePanel, 'Base Distance', SP.pileDist, 0.2, 3.0, 0.05, 2, function(v) {
+    SP.pileDist = v;
+    // Reset per-seat overrides to follow global
+    for (var s = 0; s < playerCount; s++) {
+      if (!SP.pileSeatDist[s] || !_seatSliders[s]) continue;
+      // Only reset seats that haven't been individually adjusted
+    }
+  });
+  _pileSlider(pilePanel, 'Pile Size', SP.pileRadius, 0.03, 0.25, 0.005, 3, function(v) { SP.pileRadius = v; });
+
+  // ── Per-seat sliders ──
+  _pileSection('Individual Piles');
+  var _seatSliders = {};
+  if (!SP.pileSeatDist || typeof SP.pileSeatDist !== 'object') SP.pileSeatDist = {};
+
+  for (var ps = 0; ps < playerCount; ps++) {
+    var isLocal = (ps === localSeat);
+    var seatLabel = isLocal ? 'YOU' : ('P' + seatToPlayer(ps));
+    var seatColor = isLocal ? 'rgba(34,197,94,' : AI_SEAT_COLORS[ps % AI_SEAT_COLORS.length];
+    var initDist = (SP.pileSeatDist[ps] !== undefined) ? SP.pileSeatDist[ps] : SP.pileDist;
+
+    // Colored label
+    var seatHdr = document.createElement('div');
+    seatHdr.style.cssText = 'color:' + seatColor + '0.8);font-size:9px;font-weight:700;margin-top:4px;';
+    seatHdr.textContent = seatLabel;
+    pilePanel.appendChild(seatHdr);
+
+    (function(seat, initD) {
+      _seatSliders[seat] = _pileSlider(pilePanel, 'Distance', initD, 0.2, 3.0, 0.05, 2, function(v) {
+        SP.pileSeatDist[seat] = v;
+      });
+    })(ps, initDist);
+  }
 
   tableEl.appendChild(pilePanel);
 
@@ -20042,20 +20111,18 @@ async function _runPickPhase() {
       cc.style.width = (cr * 2) + 'px'; cc.style.height = (cr * 2) + 'px';
       cc.style.left = (ccx - cr) + 'px'; cc.style.top = (ccy - cr) + 'px';
     }
+    // Recompute each pile position from center circle edge
+    for (var s = 0; s < playerCount; s++) {
+      _pilePositions[s] = _computePilePosition(s);
+    }
     var circles = document.querySelectorAll('.pickPileCircle');
     for (var ci = 0; ci < circles.length; ci++) {
       var pc = circles[ci];
       var s = parseInt(pc.dataset.seat);
-      var hc = _pickPileHandCenters ? _pickPileHandCenters[s] : null;
-      if (hc) {
-        var dx = hc.x - W2 / 2, dy = hc.y - H2 / 2;
-        var d = Math.sqrt(dx * dx + dy * dy);
-        if (d < 1) { dx = 0; dy = 1; d = 1; }
-        var px = W2 / 2 + dx * SP.pileDist;
-        var py = H2 / 2 + dy * SP.pileDist;
-        _pilePositions[s] = { x: px, y: py };
+      var pos = _pilePositions[s];
+      if (pos) {
         pc.style.width = (pr * 2) + 'px'; pc.style.height = (pr * 2) + 'px';
-        pc.style.left = (px - pr) + 'px'; pc.style.top = (py - pr) + 'px';
+        pc.style.left = (pos.x - pr) + 'px'; pc.style.top = (pos.y - pr) + 'px';
       }
     }
   }
@@ -20095,13 +20162,18 @@ async function _runPickPhase() {
 
   function _computePilePosition(seat) {
     var hc = getSeatHandCenter(seat);
-    // Push the pile center toward the edge, between hand center and table edge
-    var dx = hc.x - W / 2, dy = hc.y - H / 2;
+    // Direction from center circle to hand
+    var dx = hc.x - centerCx, dy = hc.y - centerCy;
     var dist = Math.sqrt(dx * dx + dy * dy);
     if (dist < 1) { dx = 0; dy = 1; dist = 1; }
-    // Place pile at pileDist fraction of the way from center to hand
-    var px = W / 2 + dx * SP.pileDist;
-    var py = H / 2 + dy * SP.pileDist;
+    // Normalize direction
+    var nx = dx / dist, ny = dy / dist;
+    // Per-seat distance (or global default)
+    var seatDist = (SP.pileSeatDist && SP.pileSeatDist[seat] !== undefined) ? SP.pileSeatDist[seat] : SP.pileDist;
+    // Place pile outward from center circle edge
+    var offset = centerRadius + seatDist * centerRadius;
+    var px = centerCx + nx * offset;
+    var py = centerCy + ny * offset;
     return { x: px, y: py };
   }
 
