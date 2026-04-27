@@ -19935,8 +19935,10 @@ async function _runPickPhase() {
   if (ring) ring.remove();
   var settingsPanel = document.getElementById('shuffleSettingsPanel');
   if (settingsPanel) settingsPanel.remove();
-  // Stop gather
+  // Stop gather, boundary force, and pointer force — only constraints during pick
   _shuffleGatherActive = false;
+  _shuffleAreaCenter.r = 0; // disables boundary push-back force
+  _shufflePhysicsPointer.active = false; // disables pointer force field
 
   // Reuse or create overlay
   var tableEl = document.getElementById('tableMain');
