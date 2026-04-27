@@ -17157,6 +17157,7 @@ function _shufflePhysicsLoop() {
     var forceStart = bndR * SP.boundaryForceStart; // distance where force begins
     for (var i = 0; i < _shufflePhysicsBodies.length; i++) {
       var b = _shufflePhysicsBodies[i];
+      if (b._pileSeat !== undefined) continue; // skip tiles already in a pile
       var dx = b.position.x - acx2;
       var dy = b.position.y - acy2;
       var dist = Math.hypot(dx, dy);
