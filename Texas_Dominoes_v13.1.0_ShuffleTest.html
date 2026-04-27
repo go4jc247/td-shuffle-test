@@ -20325,15 +20325,14 @@ async function _runPickPhase() {
         sprites[seat][si] = data;
         pickedHands[seat].push(entry.tile);
 
-        // Animate from pile to hand — keep simplified, convert at end
+        // Animate from pile to hand — only local player gets full 3D (for flip)
         var faceUp = isLocal;
         (function(sp, tp, fu) {
           var speed = 600 / (SPEED_MULTIPLIER * SP.pickAnimSpeed);
           seatPromises.push(animateSprite(sp, {
             x: tp.x, y: tp.y, s: tp.s, rz: tp.rz, ry: fu ? 180 : 0
           }, speed).then(function() {
-            // Now convert from simplified to full render
-            sp.classList.remove('shuffleSimple');
+            if (fu) sp.classList.remove('shuffleSimple');
           }));
         })(entry.sprite, targetPos, faceUp);
       }
