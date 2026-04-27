@@ -18189,38 +18189,6 @@ function _applyShuffleSettingsLive() {
       }
     }
   }
-  // Live-update pile circles during pick phase
-  var pickCircles = document.querySelectorAll('.pickPileCircle');
-  var centerCircle = document.getElementById('pickCenterCircle');
-  if (pickCircles.length > 0 || centerCircle) {
-    var rect2 = getRect();
-    var W2 = rect2.width, H2 = rect2.height;
-    var pr = Math.min(W2, H2) * SP.pileRadius;
-    var cr = H2 * SP.areaRadius * SP.centerCircleRadius;
-    var ccx = W2 * SP.centerXN, ccy = H2 * SP.centerYN;
-    if (centerCircle) {
-      centerCircle.style.width = (cr * 2) + 'px';
-      centerCircle.style.height = (cr * 2) + 'px';
-      centerCircle.style.left = (ccx - cr) + 'px';
-      centerCircle.style.top = (ccy - cr) + 'px';
-    }
-    for (var ci = 0; ci < pickCircles.length; ci++) {
-      var pc = pickCircles[ci];
-      var seat = parseInt(pc.dataset.seat);
-      var hc = _pickPileHandCenters ? _pickPileHandCenters[seat] : null;
-      if (hc) {
-        var dx = hc.x - W2 / 2, dy = hc.y - H2 / 2;
-        var dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < 1) { dx = 0; dy = 1; dist = 1; }
-        var px = W2 / 2 + dx * SP.pileDist;
-        var py = H2 / 2 + dy * SP.pileDist;
-        pc.style.width = (pr * 2) + 'px';
-        pc.style.height = (pr * 2) + 'px';
-        pc.style.left = (px - pr) + 'px';
-        pc.style.top = (py - pr) + 'px';
-      }
-    }
-  }
 }
 
 // Soft end: remove shuffle UI, resolve promise, but keep physics alive for pick phase
@@ -20011,21 +19979,86 @@ async function _runPickPhase() {
   counter.textContent = '0 / ' + handSize;
   tableEl.appendChild(counter);
 
-  // Small settings gear button — bottom-left, temporary for tuning pile positions
-  var pickSettingsBtn = document.createElement('button');
-  pickSettingsBtn.id = 'pickSettingsBtn';
-  pickSettingsBtn.textContent = '\u2699';
-  pickSettingsBtn.style.cssText = 'position:absolute;bottom:8px;left:8px;z-index:610;width:36px;height:36px;border-radius:50%;border:1px solid rgba(255,255,255,0.3);background:rgba(0,0,0,0.5);color:rgba(255,255,255,0.7);font-size:20px;cursor:pointer;line-height:36px;text-align:center;padding:0;';
-  pickSettingsBtn.addEventListener('click', function(e) {
-    e.stopPropagation();
-    var panel = document.getElementById('shuffleSettingsPanel');
-    if (!panel) {
-      _createShuffleSettingsPanel(tableEl);
-      panel = document.getElementById('shuffleSettingsPanel');
+  // Pile position tuning panel — semi-transparent, bottom-left
+  var pilePanel = document.createElement('div');
+  pilePanel.id = 'pileSettingsPanel';
+  pilePanel.style.cssText = 'position:absolute;bottom:6px;left:6px;z-index:610;background:rgba(0,0,0,0.35);border:1px solid rgba(255,255,255,0.15);border-radius:10px;padding:10px 14px;font-family:system-ui,sans-serif;color:rgba(255,255,255,0.85);font-size:11px;pointer-events:auto;min-width:200px;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);';
+
+  function _pileSlider(label, key, min, max, step, decimals) {
+    var row = document.createElement('div');
+    row.style.cssText = 'margin-bottom:8px;';
+    var top = document.createElement('div');
+    top.style.cssText = 'display:flex;justify-content:space-between;margin-bottom:2px;';
+    var lbl = document.createElement('span');
+    lbl.style.cssText = 'color:rgba(255,255,255,0.6);font-size:10px;';
+    lbl.textContent = label;
+    var val = document.createElement('span');
+    val.style.cssText = 'color:rgba(80,210,110,0.95);font-size:10px;font-weight:bold;min-width:36px;text-align:right;';
+    val.textContent = Number(SP[key]).toFixed(decimals);
+    top.appendChild(lbl); top.appendChild(val);
+    var sl = document.createElement('input');
+    sl.type = 'range'; sl.min = min; sl.max = max; sl.step = step; sl.value = SP[key];
+    sl.style.cssText = 'width:100%;-webkit-appearance:none;height:3px;background:rgba(255,255,255,0.2);border-radius:2px;outline:none;cursor:pointer;';
+    sl.addEventListener('input', function() {
+      SP[key] = parseFloat(sl.value);
+      val.textContent = Number(SP[key]).toFixed(decimals);
+      _updatePileCirclesLive();
+    });
+    row.appendChild(top); row.appendChild(sl);
+    pilePanel.appendChild(row);
+    return sl;
+  }
+
+  var pileTitle = document.createElement('div');
+  pileTitle.style.cssText = 'font-size:10px;font-weight:800;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.5);margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;';
+  pileTitle.innerHTML = 'Pile Positions <span id="pilePanelClose" style="cursor:pointer;font-size:14px;color:rgba(255,255,255,0.4);line-height:1;">\u2715</span>';
+  pilePanel.appendChild(pileTitle);
+
+  _pileSlider('Pile Distance', 'pileDist', 0.1, 1.0, 0.02, 2);
+  _pileSlider('Pile Size', 'pileRadius', 0.03, 0.25, 0.005, 3);
+  _pileSlider('Center Circle Size', 'centerCircleRadius', 0.2, 1.2, 0.05, 2);
+  _pileSlider('Center X', 'centerXN', 0.1, 0.9, 0.005, 3);
+  _pileSlider('Center Y', 'centerYN', 0.1, 0.9, 0.005, 3);
+
+  tableEl.appendChild(pilePanel);
+
+  // Close button
+  setTimeout(function() {
+    var closeEl = document.getElementById('pilePanelClose');
+    if (closeEl) closeEl.addEventListener('click', function() { pilePanel.style.display = 'none'; });
+  }, 50);
+
+  // Live-update circles from sliders
+  function _updatePileCirclesLive() {
+    var rect2 = getRect();
+    var W2 = rect2.width, H2 = rect2.height;
+    var pr = Math.min(W2, H2) * SP.pileRadius;
+    var cr = H2 * SP.areaRadius * SP.centerCircleRadius;
+    var ccx = W2 * SP.centerXN, ccy = H2 * SP.centerYN;
+    centerCx = ccx; centerCy = ccy;
+    pileRadius = pr; centerRadius = cr;
+    var cc = document.getElementById('pickCenterCircle');
+    if (cc) {
+      cc.style.width = (cr * 2) + 'px'; cc.style.height = (cr * 2) + 'px';
+      cc.style.left = (ccx - cr) + 'px'; cc.style.top = (ccy - cr) + 'px';
     }
-    panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
-  });
-  tableEl.appendChild(pickSettingsBtn);
+    var circles = document.querySelectorAll('.pickPileCircle');
+    for (var ci = 0; ci < circles.length; ci++) {
+      var pc = circles[ci];
+      var s = parseInt(pc.dataset.seat);
+      var hc = _pickPileHandCenters ? _pickPileHandCenters[s] : null;
+      if (hc) {
+        var dx = hc.x - W2 / 2, dy = hc.y - H2 / 2;
+        var d = Math.sqrt(dx * dx + dy * dy);
+        if (d < 1) { dx = 0; dy = 1; d = 1; }
+        var px = W2 / 2 + dx * SP.pileDist;
+        var py = H2 / 2 + dy * SP.pileDist;
+        _pilePositions[s] = { x: px, y: py };
+        pc.style.width = (pr * 2) + 'px'; pc.style.height = (pr * 2) + 'px';
+        pc.style.left = (px - pr) + 'px'; pc.style.top = (py - pr) + 'px';
+      }
+    }
+  }
 
   // Map pool entries to physics bodies
   for (var pi = 0; pi < pool.length; pi++) {
@@ -20566,9 +20599,8 @@ async function _runPickPhase() {
   if (overlay.parentNode) overlay.remove();
   if (hint.parentNode) hint.remove();
   if (counter.parentNode) counter.remove();
-  if (pickSettingsBtn.parentNode) pickSettingsBtn.remove();
-  var _sPanel = document.getElementById('shuffleSettingsPanel');
-  if (_sPanel) _sPanel.remove();
+  var _pPanel = document.getElementById('pileSettingsPanel');
+  if (_pPanel) _pPanel.remove();
 
   // Now tear down physics engine — all tiles are in their final positions
   _endShufflePhysics();
