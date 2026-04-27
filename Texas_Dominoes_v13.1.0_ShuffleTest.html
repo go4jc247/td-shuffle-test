@@ -18282,25 +18282,11 @@ function _endShufflePhysics() {
   }
   _shufflePhysicsBodies = [];
 
-  // Restore real sprites at final positions with proper setPose + shadows
-  var SP = SHUFFLE_PHYSICS;
+  // Restore shadows — but do NOT reset sprite positions (arrange animation already placed them)
   if (_shufflePhysicsRealSprites) {
     for (var i = 0; i < _shufflePhysicsRealSprites.length; i++) {
       var sp = _shufflePhysicsRealSprites[i];
-      // Restore shadow and full sprite rendering
       if (sp._shadow) sp._shadow.style.display = '';
-      sp.classList.remove('shuffleSimple');
-      // Use real setPose so everything is back in sync for the deal animation
-      if (finalPositions[i]) {
-        var fp = finalPositions[i];
-        sp.setPose({
-          x: fp.x - 28,
-          y: fp.y - 56,
-          s: SP.tileScale,
-          rz: fp.angle * 180 / Math.PI,
-          ry: 0
-        });
-      }
     }
     _shufflePhysicsRealSprites = [];
   }
