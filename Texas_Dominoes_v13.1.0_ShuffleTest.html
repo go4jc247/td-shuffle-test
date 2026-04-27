@@ -16601,7 +16601,7 @@ var SHUFFLE_PHYSICS = {
   centerCircleRadius: 0.45,
   pileSeatDist: {"0":0.45,"1":0.25,"5":0.25},
   pileSeatYOff: {"0":0.05,"1":0.095,"2":-0.11,"3":-0.1,"4":-0.11,"5":0.1},
-  pickAnimSpeed: 1.0,       // pick phase animation speed multiplier (0.1=slow, 2.0=fast)
+  pickAnimSpeed: 0.5,       // pick phase animation speed multiplier (0.1=slow, 2.0=fast)
   showPileCircles: false,   // show dashed pile/center circles (off by default)
   showPileMenu: false       // show pile tuning panel (off by default)
 };
@@ -20071,11 +20071,28 @@ async function _runPickPhase() {
   });
   tableEl.appendChild(speedBtn);
 
+  // Gear button to toggle pile adjustment menu
+  var pileGearBtn = document.createElement('button');
+  pileGearBtn.id = 'pileGearBtn';
+  pileGearBtn.textContent = '\u2699';
+  pileGearBtn.style.cssText = 'position:absolute;bottom:8px;left:56px;z-index:610;width:40px;height:40px;border-radius:50%;border:1px solid rgba(255,255,255,0.3);background:rgba(0,0,0,0.5);color:rgba(255,255,255,0.7);font-size:20px;cursor:pointer;line-height:40px;text-align:center;padding:0;';
+  pileGearBtn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    var panel = document.getElementById('pileSettingsPanel');
+    if (panel) {
+      var show = panel.style.display === 'none';
+      panel.style.display = show ? 'block' : 'none';
+      // Also toggle pile circles
+      SP.showPileCircles = show;
+      if (show) { _drawPileCircles(); } else { _removePileCircles(); }
+    }
+  });
+  tableEl.appendChild(pileGearBtn);
+
   // Pile position tuning panel — semi-transparent, bottom-left, scrollable
-  if (!SP.showPileMenu) { /* skip pile panel */ } else {
   var pilePanel = document.createElement('div');
   pilePanel.id = 'pileSettingsPanel';
-  pilePanel.style.cssText = 'position:absolute;bottom:6px;left:6px;z-index:610;background:rgba(0,0,0,0.15);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:10px 14px;font-family:system-ui,sans-serif;color:rgba(255,255,255,0.85);font-size:11px;pointer-events:auto;min-width:210px;max-height:70vh;overflow-y:auto;';
+  pilePanel.style.cssText = 'position:absolute;bottom:6px;left:6px;z-index:610;background:rgba(0,0,0,0.15);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:10px 14px;font-family:system-ui,sans-serif;color:rgba(255,255,255,0.85);font-size:11px;pointer-events:auto;min-width:210px;max-height:70vh;overflow-y:auto;display:none;';
 
   function _pileSlider(container, label, initVal, min, max, step, decimals, onChange) {
     var row = document.createElement('div');
@@ -20230,8 +20247,6 @@ async function _runPickPhase() {
       }
     }
   }
-
-  } // end showPileMenu
 
   // Map pool entries to physics bodies
   for (var pi = 0; pi < pool.length; pi++) {
@@ -20887,6 +20902,7 @@ async function _runPickPhase() {
   if (hint.parentNode) hint.remove();
   if (counter.parentNode) counter.remove();
   if (speedBtn.parentNode) speedBtn.remove();
+  if (pileGearBtn.parentNode) pileGearBtn.remove();
   var _pPanel = document.getElementById('pileSettingsPanel');
   if (_pPanel) _pPanel.remove();
 
