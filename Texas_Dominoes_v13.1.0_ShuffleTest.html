@@ -20303,19 +20303,19 @@ async function _runPickPhase() {
       var ty = pos.y + Math.sin(angle) * dist;
       var rz = Math.random() * 15 - 7;
       var e = tiles[i];
-      e.sprite.classList.remove('shuffleSimple');
+      // Keep simplified rendering during pile phase — converted when moving to hand
       e.sprite.setPose({ x: tx - 28, y: ty - 56, s: SP.tileScale, rz: rz, ry: 0 });
     }
   }
 
-  // After all picking, move tiles from piles to final hand positions
+  // After all picking, move tiles from piles to final hand positions — one seat at a time
   async function _arrangePilesToHands() {
     hint.textContent = 'Arranging hands...';
-    var arrangePromises = [];
     for (var seat = 0; seat < playerCount; seat++) {
       var tiles = _pileTiles[seat];
       var playerNum = seatToPlayer(seat);
       var isLocal = (seat === localSeat);
+      var seatPromises = [];
       for (var si = 0; si < tiles.length; si++) {
         var entry = tiles[si];
         var targetPos = getHandPosition(playerNum, si);
@@ -20325,22 +20325,20 @@ async function _runPickPhase() {
         sprites[seat][si] = data;
         pickedHands[seat].push(entry.tile);
 
-        // Animate from pile to hand
+        // Animate from pile to hand — keep simplified, convert at end
         var faceUp = isLocal;
-        (function(sp, tp, fu, body) {
+        (function(sp, tp, fu) {
           var speed = 600 / (SPEED_MULTIPLIER * SP.pickAnimSpeed);
-          arrangePromises.push(animateSprite(sp, {
+          seatPromises.push(animateSprite(sp, {
             x: tp.x, y: tp.y, s: tp.s, rz: tp.rz, ry: fu ? 180 : 0
           }, speed).then(function() {
-            if (body) {
-              Matter.Body.setPosition(body, { x: tp.x + 28, y: tp.y + 56 });
-              Matter.Body.setAngle(body, (tp.rz || 0) * Math.PI / 180);
-            }
+            // Now convert from simplified to full render
+            sp.classList.remove('shuffleSimple');
           }));
-        })(entry.sprite, targetPos, faceUp, entry._body);
+        })(entry.sprite, targetPos, faceUp);
       }
+      await Promise.all(seatPromises);
     }
-    await Promise.all(arrangePromises);
 
     // Attach gameplay handlers for local player's tiles
     for (var si = 0; si < sprites[localSeat].length; si++) {
@@ -20717,6 +20715,9 @@ async function _runPickPhase() {
     }
   }
 
+  // Shut down physics before arrange — all tiles are out of the world already
+  _endShufflePhysics();
+
   // ── ARRANGE: animate tiles from pile circles to final hand positions ──
   await _arrangePilesToHands();
   // Brief pause so pile circles stay visible during animation
@@ -20732,9 +20733,6 @@ async function _runPickPhase() {
   if (counter.parentNode) counter.remove();
   var _pPanel = document.getElementById('pileSettingsPanel');
   if (_pPanel) _pPanel.remove();
-
-  // Now tear down physics engine — all tiles are in their final positions
-  _endShufflePhysics();
 
   // Brief pause before UI comes back
   await new Promise(function(r) { setTimeout(r, 300 / (SPEED_MULTIPLIER * SP.pickAnimSpeed)); });
