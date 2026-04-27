@@ -20388,7 +20388,8 @@ async function _runPickPhase() {
             return animateSprite(sp, {
               x: tp.x, y: tp.y, s: tp.s, rz: tp.rz, ry: fu ? 180 : 0
             }, speed).then(function() {
-              if (fu) sp.classList.remove('shuffleSimple');
+              // Remove simplified rendering — all tiles need full render for gameplay
+              sp.classList.remove('shuffleSimple');
             });
           }));
         })(entry.sprite, targetPos, faceUp, seatDelay);
@@ -20882,6 +20883,19 @@ async function _runPickPhase() {
   // Stop physics loop but DON'T reset sprites (we animate them ourselves)
   _shufflePhysicsActive = false;
   if (_shufflePhysicsRAF) { cancelAnimationFrame(_shufflePhysicsRAF); _shufflePhysicsRAF = null; }
+
+  // Sync _pose from physics body positions so animateSprite starts from correct spot
+  var _syncSc = SP.tileScale;
+  for (var _si = 0; _si < _shufflePhysicsBodies.length; _si++) {
+    var _sb = _shufflePhysicsBodies[_si];
+    var _ssp = _shufflePhysicsRealSprites[_si];
+    if (_ssp && _sb) {
+      _ssp._pose = {
+        x: _sb.position.x - 28, y: _sb.position.y - 56,
+        s: _syncSc, rz: _sb.angle * 180 / Math.PI, ry: 0
+      };
+    }
+  }
 
   // ── ARRANGE: animate tiles from pile circles to final hand positions ──
   await _arrangePilesToHands();
