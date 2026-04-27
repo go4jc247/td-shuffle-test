@@ -20773,16 +20773,11 @@ async function _runPickPhase() {
         }
       }
     } else {
-      // Normal: spread across 3-5 seconds, wait for ALL to arrive
-      var sweepTime = (3000 + Math.random() * 2000) / (SPEED_MULTIPLIER * SP.pickAnimSpeed);
-      var sweepGap = remaining.length > 1 ? sweepTime / remaining.length : 500;
+      // Shuffler grabs all remaining at the same time
       var sweepSlides = [];
       for (var ri = 0; ri < remaining.length; ri++) {
         sweepSlides.push(slideTileToSeat(remaining[ri], dealerSeat, shufflerPick, shufflerCenter, color));
         shufflerPick++;
-        if (ri < remaining.length - 1) {
-          await new Promise(function(r) { setTimeout(r, sweepGap * (0.7 + Math.random() * 0.6)); });
-        }
       }
       await Promise.all(sweepSlides);
     }
