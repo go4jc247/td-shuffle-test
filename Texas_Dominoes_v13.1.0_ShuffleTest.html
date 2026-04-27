@@ -20107,6 +20107,33 @@ async function _runPickPhase() {
     })(ps, initDist, initYOff);
   }
 
+  // Export button
+  var exportBtn = document.createElement('button');
+  exportBtn.textContent = 'Export Settings';
+  exportBtn.style.cssText = 'margin-top:10px;width:100%;padding:6px;border:1px solid rgba(255,255,255,0.2);border-radius:6px;background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.8);font-size:10px;cursor:pointer;';
+  exportBtn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    var out = {
+      centerCircleRadius: SP.centerCircleRadius,
+      centerXN: SP.centerXN,
+      centerYN: SP.centerYN,
+      pileDist: SP.pileDist,
+      pileRadius: SP.pileRadius,
+      pileSeatDist: JSON.parse(JSON.stringify(SP.pileSeatDist)),
+      pileSeatYOff: JSON.parse(JSON.stringify(SP.pileSeatYOff))
+    };
+    var json = JSON.stringify(out, null, 2);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(json).then(function() {
+        exportBtn.textContent = 'Copied!';
+        setTimeout(function() { exportBtn.textContent = 'Export Settings'; }, 1500);
+      });
+    } else {
+      prompt('Copy pile settings:', json);
+    }
+  });
+  pilePanel.appendChild(exportBtn);
+
   tableEl.appendChild(pilePanel);
 
   // Close button
