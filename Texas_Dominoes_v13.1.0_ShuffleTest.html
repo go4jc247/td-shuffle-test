@@ -20181,8 +20181,14 @@ async function _runPickPhase() {
   var AI_SEAT_COLORS = ['rgba(239,68,68,', 'rgba(59,130,246,', 'rgba(34,197,94,', 'rgba(234,179,8,', 'rgba(168,85,247,', 'rgba(236,72,153,'];
 
   function slideTileToSeat(entry, aiSeat, slotIdx, seatCenter, color) {
+    if (!entry._body) {
+      // No physics body — just snap directly
+      snapTileToHand(entry, aiSeat, slotIdx, false);
+      return Promise.resolve();
+    }
     entry.picked = true;
     var body = entry._body;
+    if (body.isStatic) Matter.Body.setStatic(body, false); // un-freeze if needed
     var constraint = grabBody(body, body.position.x, body.position.y);
     var startX = body.position.x, startY = body.position.y;
     var targetX = seatCenter.x, targetY = seatCenter.y;
@@ -20198,7 +20204,9 @@ async function _runPickPhase() {
     tableEl.appendChild(ghost);
 
     return new Promise(function(resolveSlide) {
+      var resolved = false;
       var slideInterval = setInterval(function() {
+        if (resolved) return;
         var elapsed = performance.now() - slideStart;
         var t = Math.min(1, elapsed / slideDuration);
         var et = 1 - Math.pow(1 - t, 2); // ease-out
@@ -20209,6 +20217,7 @@ async function _runPickPhase() {
         ghost.style.left = cx + 'px';
         ghost.style.top = cy + 'px';
         if (t >= 1) {
+          resolved = true;
           clearInterval(slideInterval);
           releaseGrab(constraint);
           ghost.remove();
@@ -20216,6 +20225,17 @@ async function _runPickPhase() {
           resolveSlide();
         }
       }, 16);
+      // Safety timeout — force resolve if animation gets stuck
+      setTimeout(function() {
+        if (!resolved) {
+          resolved = true;
+          clearInterval(slideInterval);
+          try { releaseGrab(constraint); } catch(e) {}
+          ghost.remove();
+          snapTileToHand(entry, aiSeat, slotIdx, false);
+          resolveSlide();
+        }
+      }, slideDuration + 2000);
     });
   }
 
