@@ -20346,9 +20346,10 @@ async function _runPickPhase() {
     // Tag the body with its pile seat — physics loop will contain it and pull it in
     if (entry._body) {
       entry._body._pileSeat = seat;
-      // High friction so tiles settle quickly in the pile
+      // High friction, no bounce — tiles block each other but don't bounce around
       entry._body.friction = 0.8;
       entry._body.frictionAir = 0.15;
+      entry._body.restitution = 0;
       // Give it a gentle nudge toward pile center — physics does the rest
       var dx = pos.x - entry._body.position.x;
       var dy = pos.y - entry._body.position.y;
@@ -20635,14 +20636,25 @@ async function _runPickPhase() {
       return Promise.resolve();
     }
     entry.picked = true;
-    // Use pile position as target instead of hand position
+    // Use pile position as target — spread tiles out so they don't stack on one point
     var pilePos = _pilePositions[aiSeat];
     if (pilePos) { seatCenter = pilePos; }
     var body = entry._body;
-    if (body.isStatic) Matter.Body.setStatic(body, false); // un-freeze if needed
-    var constraint = grabBody(body, body.position.x, body.position.y);
+    if (body.isStatic) Matter.Body.setStatic(body, false);
+    // Softer constraint so tiles can't force through each other
+    var constraint = Matter.Constraint.create({
+      pointA: { x: body.position.x, y: body.position.y },
+      bodyB: body,
+      pointB: { x: 0, y: 0 },
+      stiffness: 0.3, damping: 0.2, length: 0
+    });
+    Matter.Composite.add(_shufflePhysicsEngine.world, constraint);
     var startX = body.position.x, startY = body.position.y;
-    var targetX = seatCenter.x, targetY = seatCenter.y;
+    // Offset target within pile circle so tiles spread out
+    var spreadAngle = slotIdx * (Math.PI * 2 / Math.max(handSize, 1)) + Math.random() * 0.3;
+    var spreadDist = pileRadius ? pileRadius * 0.35 : 20;
+    var targetX = seatCenter.x + Math.cos(spreadAngle) * spreadDist;
+    var targetY = seatCenter.y + Math.sin(spreadAngle) * spreadDist;
     var slideDuration = (800 + Math.random() * 400) / (SPEED_MULTIPLIER * SP.pickAnimSpeed);
     var slideStart = performance.now();
 
