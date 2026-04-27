@@ -3865,9 +3865,9 @@ class SessionV6_4g{
     this.current_bid=0;
     this.bid_marks=1;
 
-    // Rotate dealer counterclockwise (to next seat)
-    // Counterclockwise: 0 -> 5 -> 4 -> 3 -> 2 -> 1 -> 0 (for 6 players)
-    this.dealer = (this.dealer - 1 + this.game.player_count) % this.game.player_count;
+    // Rotate dealer to next seat (counterclockwise around the table)
+    // Seats are numbered clockwise, so +1 passes to the right
+    this.dealer = (this.dealer + 1) % this.game.player_count;
 
     const pool = GAME_MODE === 'MOON' ? moonDominoesForSet() : allDominoesForSet(this.game.max_pip);
     shuffleInPlace(pool);
@@ -19963,26 +19963,16 @@ async function _runPickPhase() {
     return { x: ex, y: ey, s: sc, rz: erz, ry: 0 };
   }
 
-  // Animate a picked tile from pile to hand slot (or edge for AI)
+  // Animate a picked tile — slides directly to final hand position
   function animateTileToHand(entry, targetSeat, slotIdx, faceUp) {
     var playerNum = seatToPlayer(targetSeat);
-    var targetPos;
-    var isLocal = (targetSeat === localSeat);
-
-    if (isLocal) {
-      // Player's tiles go to their normal hand position (visible, face-up)
-      targetPos = getHandPosition(playerNum, slotIdx);
-    } else {
-      // AI tiles go to edge positions (half visible, face-down)
-      targetPos = getEdgePosition(targetSeat, slotIdx);
-    }
+    var targetPos = getHandPosition(playerNum, slotIdx);
     if (!targetPos) return Promise.resolve();
     entry.picked = true;
-    // Restore full 3-panel sprite for dealing (shadow stays hidden until settle)
     entry.sprite.classList.remove('shuffleSimple');
     bringToFront(entry.sprite);
-    // Respect the game's animation speed slider
-    var speed = SP.dealSpeed / SPEED_MULTIPLIER;
+    // Longer animation for visible slide across the table
+    var speed = Math.max(SP.dealSpeed, 500) / SPEED_MULTIPLIER;
     return animateSprite(entry.sprite, {
       x: targetPos.x, y: targetPos.y,
       s: targetPos.s, rz: targetPos.rz,
@@ -20083,54 +20073,54 @@ async function _runPickPhase() {
     });
   }
 
-  // AI group picks simultaneously
+  // AI group picks — seats pick simultaneously, tiles staggered visibly
   async function aiGroupPick(seats, groupLabel) {
     if (seats.length === 0) return;
     hint.textContent = groupLabel;
     counter.textContent = '';
 
-    var groupPromises = [];
+    // Each seat picks tiles one at a time, but all seats go in parallel
+    var seatPromises = [];
     for (var si = 0; si < seats.length; si++) {
-      (function(aiSeat, seatDelay) {
-        for (var pick = 0; pick < handSize; pick++) {
-          (function(slotIdx) {
-            var delay = slotIdx * ((SP.dealStagger + 60) / SPEED_MULTIPLIER) + seatDelay;
-            groupPromises.push(new Promise(function(resolve) {
-              setTimeout(function() {
-                var available = [];
-                for (var j = 0; j < pool.length; j++) {
-                  if (!pool[j].picked) available.push(j);
-                }
-                if (available.length === 0) { resolve(); return; }
-                var randIdx = available[Math.floor(Math.random() * available.length)];
-                var entry = pool[randIdx];
-                assignTileToSeat(entry, aiSeat, slotIdx);
-                animateTileToHand(entry, aiSeat, slotIdx, false).then(resolve);
-              }, delay);
-            }));
-          })(pick);
-        }
-      })(seats[si], si * (30 / SPEED_MULTIPLIER));
+      (function(aiSeat) {
+        seatPromises.push((async function() {
+          for (var pick = 0; pick < handSize; pick++) {
+            var available = [];
+            for (var j = 0; j < pool.length; j++) {
+              if (!pool[j].picked) available.push(j);
+            }
+            if (available.length === 0) break;
+            var randIdx = available[Math.floor(Math.random() * available.length)];
+            var entry = pool[randIdx];
+            assignTileToSeat(entry, aiSeat, pick);
+            // Animate slide to hand — wait for each tile to arrive before picking next
+            await animateTileToHand(entry, aiSeat, pick, false);
+            // Small pause between picks for natural feel
+            await new Promise(function(r) {
+              setTimeout(r, (80 + Math.random() * 120) / SPEED_MULTIPLIER);
+            });
+          }
+        })());
+      })(seats[si]);
     }
-    await Promise.all(groupPromises);
-    await new Promise(function(r) { setTimeout(r, 200 / SPEED_MULTIPLIER); });
+    await Promise.all(seatPromises);
+    await new Promise(function(r) { setTimeout(r, 300 / SPEED_MULTIPLIER); });
   }
 
-  // Shuffler auto-gets remaining tiles
+  // Shuffler auto-gets remaining tiles — sweep them one by one
   async function shufflerAutoGet() {
     hint.textContent = 'Shuffler gets remaining tiles...';
     counter.textContent = '';
     var shufflerPick = 0;
-    var autoPromises = [];
     for (var j = 0; j < pool.length; j++) {
       if (!pool[j].picked) {
         assignTileToSeat(pool[j], dealerSeat, shufflerPick);
         var faceUp = (dealerSeat === localSeat);
-        autoPromises.push(animateTileToHand(pool[j], dealerSeat, shufflerPick, faceUp));
+        await animateTileToHand(pool[j], dealerSeat, shufflerPick, faceUp);
+        await new Promise(function(r) { setTimeout(r, 60 / SPEED_MULTIPLIER); });
         shufflerPick++;
       }
     }
-    await Promise.all(autoPromises);
     if (dealerSeat === localSeat) {
       // Attach gameplay handlers for shuffler's auto-dealt tiles
       for (var si = 0; si < sprites[localSeat].length; si++) {
@@ -20198,43 +20188,8 @@ async function _runPickPhase() {
   if (hint.parentNode) hint.remove();
   if (counter.parentNode) counter.remove();
 
-  // Small pause so the last AI pick lands at the edge before we animate everything
+  // Brief pause before UI comes back
   await new Promise(function(r) { setTimeout(r, 300 / SPEED_MULTIPLIER); });
-
-  // Animate all AI tiles from edge positions to final hand positions simultaneously
-  var settleMs = 800 / SPEED_MULTIPLIER;
-  var settlePromises = [];
-  for (var seat = 0; seat < playerCount; seat++) {
-    if (seat === localSeat) continue; // player's tiles are already in place
-    var seatSprites = sprites[seat] || [];
-    for (var si = 0; si < seatSprites.length; si++) {
-      var sd = seatSprites[si];
-      if (!sd || !sd.sprite) continue;
-      var pNum = seatToPlayer(seat);
-      var finalPos = getHandPosition(pNum, si);
-      if (!finalPos) continue;
-      // Use CSS transition for smooth movement from current position to final
-      (function(sprite, fp, ms) {
-        // Set CSS transition on both sprite and shadow so they move together
-        sprite.style.transition = 'transform ' + ms + 'ms ease-in-out';
-        if (sprite._shadow) {
-          sprite._shadow.style.transition = 'transform ' + ms + 'ms ease-in-out';
-        }
-        // Force a reflow so the browser registers the current position
-        sprite.offsetHeight;
-        // Set the final transform — setPose updates both sprite and shadow
-        sprite.setPose({ x: fp.x, y: fp.y, s: fp.s, rz: fp.rz, ry: 0 });
-        settlePromises.push(new Promise(function(resolve) {
-          setTimeout(function() {
-            sprite.style.transition = '';
-            if (sprite._shadow) sprite._shadow.style.transition = '';
-            resolve();
-          }, ms + 50);
-        }));
-      })(sd.sprite, finalPos, settleMs);
-    }
-  }
-  await Promise.all(settlePromises);
 
   // Tiles are in place — now fade UI back in
   _setShuffleTableUI(true);
