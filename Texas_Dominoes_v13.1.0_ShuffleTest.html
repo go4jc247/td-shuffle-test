@@ -17178,6 +17178,35 @@ function _shufflePhysicsLoop() {
     }
   }
 
+  // Per-pile containment — tiles tagged with _pileSeat stay inside their pile circle
+  if (_pickPilePositions && _pickPileRadius > 0) {
+    for (var pi = 0; pi < _shufflePhysicsBodies.length; pi++) {
+      var pb = _shufflePhysicsBodies[pi];
+      if (pb._pileSeat === undefined) continue;
+      var pp = _pickPilePositions[pb._pileSeat];
+      if (!pp) continue;
+      var pdx = pb.position.x - pp.x;
+      var pdy = pb.position.y - pp.y;
+      var pdist = Math.sqrt(pdx * pdx + pdy * pdy);
+      var pLimit = _pickPileRadius * 0.75; // containment zone
+      if (pdist > pLimit && pdist > 1) {
+        var pnx = pdx / pdist, pny = pdy / pdist;
+        var pStr = 0.002 * Math.pow(Math.min((pdist - pLimit) / pLimit, 2), 1.5);
+        Matter.Body.applyForce(pb, pb.position, { x: -pnx * pStr, y: -pny * pStr });
+        // Hard contain — kill outward velocity at pile edge
+        if (pdist > _pickPileRadius * 0.9) {
+          var dot = pb.velocity.x * pnx + pb.velocity.y * pny;
+          if (dot > 0) {
+            Matter.Body.setVelocity(pb, {
+              x: pb.velocity.x - pnx * dot,
+              y: pb.velocity.y - pny * dot
+            });
+          }
+        }
+      }
+    }
+  }
+
   // Hard screen clamp — tiles cannot leave the visible table area
   var _clampRect = getRect();
   var _clampW = _clampRect.width, _clampH = _clampRect.height;
@@ -18271,6 +18300,10 @@ function _endShufflePhysics() {
     }
     _shufflePhysicsRealSprites = [];
   }
+
+  // Clear pile containment globals
+  _pickPilePositions = null;
+  _pickPileRadius = 0;
 
   // Remove UI
   var overlay = document.getElementById('shufflePhysicsOverlay');
@@ -19932,6 +19965,8 @@ async function _transitionRoundEnd() {
 // then AI picks going around the table. Tiles are ACTUALLY assigned here.
 var _pickPileHandCenters = null; // seat -> {x,y} for live settings update
 var _shufflePickPool = []; // set by startNewHand
+var _pickPilePositions = null; // seat -> {x,y} — shared with physics loop
+var _pickPileRadius = 0; // pile circle radius — shared with physics loop
 
 async function _runPickPhase() {
   const localSeat = getLocalSeat();
@@ -20155,6 +20190,7 @@ async function _runPickPhase() {
     var ccx = W2 * SP.centerXN, ccy = H2 * SP.centerYN;
     centerCx = ccx; centerCy = ccy;
     pileRadius = pr; centerRadius = cr;
+    _pickPileRadius = pr; // sync global for physics loop
     var cc = document.getElementById('pickCenterCircle');
     if (cc) {
       cc.style.width = (cr * 2) + 'px'; cc.style.height = (cr * 2) + 'px';
@@ -20202,6 +20238,7 @@ async function _runPickPhase() {
   var W = rect.width, H = rect.height;
   var centerCx = W * SP.centerXN, centerCy = H * SP.centerYN;
   var pileRadius = Math.min(W, H) * SP.pileRadius;
+  _pickPileRadius = pileRadius;
   var centerRadius = H * SP.areaRadius * SP.centerCircleRadius;
 
   // Compute pile positions — each seat gets a circle near their edge
@@ -20233,6 +20270,7 @@ async function _runPickPhase() {
     _pilePositions[seat] = _computePilePosition(seat);
     _pileTiles[seat] = [];
   }
+  _pickPilePositions = _pilePositions; // share with physics loop
 
   // Draw visible containment circles
   function _drawPileCircles() {
@@ -20282,40 +20320,33 @@ async function _runPickPhase() {
     var pos = _pilePositions[seat];
     _pileTiles[seat].push(entry);
 
-    // Remove physics body so it can't collide with incoming tiles
-    if (entry._body && _shufflePhysicsEngine) {
-      Matter.World.remove(_shufflePhysicsEngine.world, entry._body);
-      entry._bodyRemoved = true;
-    }
-
-    // Rearrange ALL tiles in this pile to make room
-    _arrangePileLayout(seat);
-  }
-
-  function _arrangePileLayout(seat) {
-    var tiles = _pileTiles[seat];
-    var pos = _pilePositions[seat];
-    var count = tiles.length;
-    for (var i = 0; i < count; i++) {
-      var angle = i * (Math.PI * 2 / Math.max(handSize, 1));
-      var dist = count <= 1 ? 0 : Math.min(pileRadius * 0.5, 20 + count * 3);
+    // Tag the body with its pile seat — physics loop will contain it
+    if (entry._body) {
+      entry._body._pileSeat = seat;
+      // High friction so tiles settle quickly in the pile
+      entry._body.friction = 0.8;
+      entry._body.frictionAir = 0.15;
+      // Position it neatly inside the pile
+      var count = _pileTiles[seat].length;
+      var angle = (count - 1) * (Math.PI * 2 / Math.max(handSize, 1));
+      var dist = count <= 1 ? 0 : Math.min(pileRadius * 0.4, 15 + count * 3);
       var tx = pos.x + Math.cos(angle) * dist;
       var ty = pos.y + Math.sin(angle) * dist;
-      var rz = Math.random() * 15 - 7;
-      var e = tiles[i];
-      // Keep simplified rendering during pile phase — converted when moving to hand
-      e.sprite.setPose({ x: tx - 28, y: ty - 56, s: SP.tileScale, rz: rz, ry: 0 });
+      Matter.Body.setPosition(entry._body, { x: tx, y: ty });
+      Matter.Body.setVelocity(entry._body, { x: 0, y: 0 });
+      Matter.Body.setAngularVelocity(entry._body, 0);
     }
   }
 
-  // After all picking, move tiles from piles to final hand positions — one seat at a time
+  // After all picking, move tiles from piles to final hand positions — cascaded 200ms apart
   async function _arrangePilesToHands() {
     hint.textContent = 'Arranging hands...';
+    var allPromises = [];
     for (var seat = 0; seat < playerCount; seat++) {
       var tiles = _pileTiles[seat];
       var playerNum = seatToPlayer(seat);
       var isLocal = (seat === localSeat);
-      var seatPromises = [];
+      var seatDelay = seat * (200 / (SPEED_MULTIPLIER * SP.pickAnimSpeed));
       for (var si = 0; si < tiles.length; si++) {
         var entry = tiles[si];
         var targetPos = getHandPosition(playerNum, si);
@@ -20325,19 +20356,21 @@ async function _runPickPhase() {
         sprites[seat][si] = data;
         pickedHands[seat].push(entry.tile);
 
-        // Animate from pile to hand — only local player gets full 3D (for flip)
+        // Animate from pile to hand — cascaded start, only local player gets full 3D
         var faceUp = isLocal;
-        (function(sp, tp, fu) {
+        (function(sp, tp, fu, delay) {
           var speed = 600 / (SPEED_MULTIPLIER * SP.pickAnimSpeed);
-          seatPromises.push(animateSprite(sp, {
-            x: tp.x, y: tp.y, s: tp.s, rz: tp.rz, ry: fu ? 180 : 0
-          }, speed).then(function() {
-            if (fu) sp.classList.remove('shuffleSimple');
+          allPromises.push(new Promise(function(r) { setTimeout(r, delay); }).then(function() {
+            return animateSprite(sp, {
+              x: tp.x, y: tp.y, s: tp.s, rz: tp.rz, ry: fu ? 180 : 0
+            }, speed).then(function() {
+              if (fu) sp.classList.remove('shuffleSimple');
+            });
           }));
-        })(entry.sprite, targetPos, faceUp);
+        })(entry.sprite, targetPos, faceUp, seatDelay);
       }
-      await Promise.all(seatPromises);
     }
+    await Promise.all(allPromises);
 
     // Attach gameplay handlers for local player's tiles
     for (var si = 0; si < sprites[localSeat].length; si++) {
@@ -20398,6 +20431,20 @@ async function _runPickPhase() {
     for (var i = 0; i < pool.length; i++) {
       if (pool[i].picked || !pool[i]._body) continue;
       var b = pool[i]._body;
+      var dx = b.position.x - px, dy = b.position.y - py;
+      var d2 = dx * dx + dy * dy;
+      if (d2 < bestD2) { bestD2 = d2; best = b; }
+    }
+    return best;
+  }
+
+  // Find a tile in the local player's pile (for rearranging)
+  function findPileBodyAt(px, py, maxDist) {
+    var best = null, bestD2 = maxDist * maxDist;
+    var tiles = _pileTiles[localSeat] || [];
+    for (var i = 0; i < tiles.length; i++) {
+      var b = tiles[i]._body;
+      if (!b) continue;
       var dx = b.position.x - px, dy = b.position.y - py;
       var d2 = dx * dx + dy * dy;
       if (d2 < bestD2) { bestD2 = d2; best = b; }
@@ -20484,9 +20531,14 @@ async function _runPickPhase() {
             if (!pool[di].picked && pool[di]._body) unpickedCount++;
           }
           var body = findUnpickedBodyAt(tx, ty, 80);
-          console.log('[Pick] touch at', Math.round(tx), Math.round(ty), 'found body:', !!body, 'unpicked:', unpickedCount, 'physics:', _shufflePhysicsActive);
+          var isPileGrab = false;
+          if (!body) {
+            body = findPileBodyAt(tx, ty, 60);
+            isPileGrab = !!body;
+          }
+          console.log('[Pick] touch at', Math.round(tx), Math.round(ty), 'found body:', !!body, 'pile:', isPileGrab, 'unpicked:', unpickedCount);
           if (body) {
-            _pickGrabs[t.identifier] = { body: body, constraint: grabBody(body, tx, ty), entry: poolEntryForBody(body) };
+            _pickGrabs[t.identifier] = { body: body, constraint: grabBody(body, tx, ty), entry: poolEntryForBody(body), isPileGrab: isPileGrab };
           }
         }
       }
@@ -20507,7 +20559,7 @@ async function _runPickPhase() {
           var g = _pickGrabs[t.identifier];
           if (g) {
             releaseGrab(g.constraint);
-            if (g.entry && !g.entry.picked && (t.clientY - br.top) > snapZoneY) pickTileForPlayer(g.entry);
+            if (!g.isPileGrab && g.entry && !g.entry.picked && (t.clientY - br.top) > snapZoneY) pickTileForPlayer(g.entry);
             delete _pickGrabs[t.identifier];
           }
         }
@@ -20517,7 +20569,9 @@ async function _runPickPhase() {
         var br = overlay.getBoundingClientRect();
         var mx = e.clientX - br.left, my = e.clientY - br.top;
         var body = findUnpickedBodyAt(mx, my, 80);
-        if (body) _pickMouseGrab = { body: body, constraint: grabBody(body, mx, my), entry: poolEntryForBody(body) };
+        var isPileGrab = false;
+        if (!body) { body = findPileBodyAt(mx, my, 60); isPileGrab = !!body; }
+        if (body) _pickMouseGrab = { body: body, constraint: grabBody(body, mx, my), entry: poolEntryForBody(body), isPileGrab: isPileGrab };
       }
       function onMouseMove(e) {
         if (!_pickMouseGrab) return;
@@ -20529,7 +20583,7 @@ async function _runPickPhase() {
         if (!_pickMouseGrab) return;
         releaseGrab(_pickMouseGrab.constraint);
         var br = overlay.getBoundingClientRect();
-        if (_pickMouseGrab.entry && !_pickMouseGrab.entry.picked && (e.clientY - br.top) > snapZoneY) pickTileForPlayer(_pickMouseGrab.entry);
+        if (!_pickMouseGrab.isPileGrab && _pickMouseGrab.entry && !_pickMouseGrab.entry.picked && (e.clientY - br.top) > snapZoneY) pickTileForPlayer(_pickMouseGrab.entry);
         _pickMouseGrab = null;
         if (playerPicked >= handSize) { cleanup(); resolve(); }
       }
