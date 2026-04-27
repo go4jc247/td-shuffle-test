@@ -20028,44 +20028,48 @@ async function _runPickPhase() {
   var localIsOpponent = opponentSeats.indexOf(localSeat) >= 0;
   var localIsPartner = partnerSeats.indexOf(localSeat) >= 0;
 
-  // Player pick function — tap to pick tiles
+  // Player pick — drag tiles toward your hand, or tap to auto-slide
   var playerPicked = 0;
   function playerPickPhase() {
     return new Promise(function(resolve) {
-      hint.textContent = 'Pick your ' + handSize + ' dominoes';
+      hint.textContent = 'Pick your ' + handSize + ' dominoes — drag or tap';
       counter.textContent = '0 / ' + handSize;
 
-      function handlePickClick(e) {
-        if (playerPicked >= handSize) return;
-        e.preventDefault();
-        e.stopPropagation();
+      var _pickDrags = {}; // touchId -> { entry, startX, startY }
+      var _pickMouseDrag = null;
 
-        var tRect = tableEl.getBoundingClientRect();
-        var clickX, clickY;
-        if (e.touches && e.touches.length > 0) {
-          clickX = e.touches[0].clientX - tRect.left;
-          clickY = e.touches[0].clientY - tRect.top;
-        } else {
-          clickX = e.clientX - tRect.left;
-          clickY = e.clientY - tRect.top;
-        }
-
+      // Find closest unpicked tile to a point
+      function findTileAt(px, py) {
         var bestIdx = -1, bestDist = Infinity;
+        var tRect = tableEl.getBoundingClientRect();
         for (var i = 0; i < pool.length; i++) {
           if (pool[i].picked) continue;
           var sp = pool[i].sprite;
           var spRect = sp.getBoundingClientRect();
           var spCx = spRect.left + spRect.width / 2 - tRect.left;
           var spCy = spRect.top + spRect.height / 2 - tRect.top;
-          var dx = clickX - spCx, dy = clickY - spCy;
+          var dx = px - spCx, dy = py - spCy;
           var dist = Math.sqrt(dx * dx + dy * dy);
-          if (dist < Math.max(spRect.width, spRect.height) * 0.6 && dist < bestDist) {
+          if (dist < Math.max(spRect.width, spRect.height) * 0.8 && dist < bestDist) {
             bestDist = dist; bestIdx = i;
           }
         }
-        if (bestIdx < 0) return;
+        return bestIdx >= 0 ? pool[bestIdx] : null;
+      }
 
-        var entry = pool[bestIdx];
+      // Get player's hand center (for snap detection)
+      var playerNum = seatToPlayer(localSeat);
+      var handCenterY = 0, handCount = 0;
+      for (var hi = 0; hi < handSize; hi++) {
+        var hp = getHandPosition(playerNum, hi);
+        if (hp) { handCenterY += hp.y + 56; handCount++; }
+      }
+      handCenterY = handCount > 0 ? handCenterY / handCount : getRect().height * 0.85;
+      // Snap zone: lower 35% of screen
+      var snapZoneY = getRect().height * 0.65;
+
+      function pickTile(entry) {
+        if (playerPicked >= handSize || entry.picked) return;
         var slotIdx = playerPicked;
         playerPicked++;
         assignTileToSeat(entry, localSeat, slotIdx);
@@ -20080,13 +20084,109 @@ async function _runPickPhase() {
         });
 
         if (playerPicked >= handSize) {
-          overlay.removeEventListener('click', handlePickClick);
-          overlay.removeEventListener('touchstart', handlePickClick);
+          cleanup();
           resolve();
         }
       }
-      overlay.addEventListener('click', handlePickClick);
-      overlay.addEventListener('touchstart', handlePickClick, { passive: false });
+
+      function cleanup() {
+        overlay.removeEventListener('mousedown', onMouseDown);
+        overlay.removeEventListener('mousemove', onMouseMove);
+        overlay.removeEventListener('mouseup', onMouseUp);
+        overlay.removeEventListener('touchstart', onTouchStart);
+        overlay.removeEventListener('touchmove', onTouchMove);
+        overlay.removeEventListener('touchend', onTouchEnd);
+      }
+
+      // ── Mouse handlers ──
+      function onMouseDown(e) {
+        e.preventDefault();
+        var br = tableEl.getBoundingClientRect();
+        var mx = e.clientX - br.left, my = e.clientY - br.top;
+        var entry = findTileAt(mx, my);
+        if (entry) {
+          _pickMouseDrag = { entry: entry, startX: mx, startY: my };
+          bringToFront(entry.sprite);
+        }
+      }
+      function onMouseMove(e) {
+        if (!_pickMouseDrag) return;
+        var br = tableEl.getBoundingClientRect();
+        var mx = e.clientX - br.left, my = e.clientY - br.top;
+        var entry = _pickMouseDrag.entry;
+        if (!entry.picked) {
+          entry.sprite.setPose({ x: mx - 28, y: my - 56, s: SP.tileScale, rz: 0, ry: 0 });
+        }
+      }
+      function onMouseUp(e) {
+        if (!_pickMouseDrag) return;
+        var br = tableEl.getBoundingClientRect();
+        var my = e.clientY - br.top;
+        var entry = _pickMouseDrag.entry;
+        _pickMouseDrag = null;
+        if (!entry.picked) {
+          // If dragged into snap zone or just tapped, pick it
+          if (my > snapZoneY || Math.abs(my - _pickMouseDrag?.startY) < 10) {
+            pickTile(entry);
+          }
+        }
+      }
+
+      // ── Touch handlers (multi-finger) ──
+      function onTouchStart(e) {
+        e.preventDefault();
+        var br = tableEl.getBoundingClientRect();
+        for (var ti = 0; ti < e.changedTouches.length; ti++) {
+          var t = e.changedTouches[ti];
+          var tx = t.clientX - br.left, ty = t.clientY - br.top;
+          var entry = findTileAt(tx, ty);
+          if (entry && !entry.picked) {
+            _pickDrags[t.identifier] = { entry: entry, startX: tx, startY: ty };
+            bringToFront(entry.sprite);
+          }
+        }
+      }
+      function onTouchMove(e) {
+        e.preventDefault();
+        var br = tableEl.getBoundingClientRect();
+        for (var ti = 0; ti < e.changedTouches.length; ti++) {
+          var t = e.changedTouches[ti];
+          var drag = _pickDrags[t.identifier];
+          if (!drag || drag.entry.picked) continue;
+          var tx = t.clientX - br.left, ty = t.clientY - br.top;
+          drag.entry.sprite.setPose({ x: tx - 28, y: ty - 56, s: SP.tileScale, rz: 0, ry: 0 });
+        }
+      }
+      function onTouchEnd(e) {
+        e.preventDefault();
+        var br = tableEl.getBoundingClientRect();
+        for (var ti = 0; ti < e.changedTouches.length; ti++) {
+          var t = e.changedTouches[ti];
+          var drag = _pickDrags[t.identifier];
+          if (!drag) continue;
+          delete _pickDrags[t.identifier];
+          var ty = t.clientY - br.top;
+          var entry = drag.entry;
+          if (!entry.picked) {
+            var dragDist = Math.sqrt(Math.pow(t.clientX - br.left - drag.startX, 2) + Math.pow(ty - drag.startY, 2));
+            // Pick if dragged into snap zone OR if it was just a tap (small drag distance)
+            if (ty > snapZoneY || dragDist < 15) {
+              pickTile(entry);
+            } else {
+              // Return tile to original position
+              var pose = entry.sprite._lastPose || { x: drag.startX - 28, y: drag.startY - 56, s: SP.tileScale, rz: 0, ry: 0 };
+              entry.sprite.setPose(pose);
+            }
+          }
+        }
+      }
+
+      overlay.addEventListener('mousedown', onMouseDown);
+      overlay.addEventListener('mousemove', onMouseMove);
+      overlay.addEventListener('mouseup', onMouseUp);
+      overlay.addEventListener('touchstart', onTouchStart, { passive: false });
+      overlay.addEventListener('touchmove', onTouchMove, { passive: false });
+      overlay.addEventListener('touchend', onTouchEnd, { passive: false });
     });
   }
 
