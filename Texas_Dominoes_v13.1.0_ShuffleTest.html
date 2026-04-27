@@ -20741,23 +20741,51 @@ async function _runPickPhase() {
     var shufflerPick = 0;
     var faceUp = (dealerSeat === localSeat);
     var color = AI_SEAT_COLORS[dealerSeat % AI_SEAT_COLORS.length];
-    // Grab remaining tiles — spread across 3-5 seconds, wait for ALL to arrive
     var remaining = [];
     for (var j = 0; j < pool.length; j++) {
       if (!pool[j].picked && pool[j]._body && !pool[j]._body.isStatic) remaining.push(pool[j]);
     }
-    var sweepTime = (3000 + Math.random() * 2000) / (SPEED_MULTIPLIER * SP.pickAnimSpeed);
-    var sweepGap = remaining.length > 1 ? sweepTime / remaining.length : 500;
-    var sweepSlides = [];
-    for (var ri = 0; ri < remaining.length; ri++) {
-      sweepSlides.push(slideTileToSeat(remaining[ri], dealerSeat, shufflerPick, shufflerCenter, color));
-      shufflerPick++;
-      if (ri < remaining.length - 1) {
-        await new Promise(function(r) { setTimeout(r, sweepGap * (0.7 + Math.random() * 0.6)); });
+
+    if (GAME_MODE === 'MOON') {
+      // Moon: shuffler grabs all but 1 at same time, last one goes to widow
+      var widowEntry = remaining.pop(); // last one = widow
+      var sweepSlides = [];
+      for (var ri = 0; ri < remaining.length; ri++) {
+        sweepSlides.push(slideTileToSeat(remaining[ri], dealerSeat, shufflerPick, shufflerCenter, color));
+        shufflerPick++;
       }
+      await Promise.all(sweepSlides);
+      // Send the widow tile to the widow position
+      if (widowEntry) {
+        widowEntry.picked = true;
+        var wp = getWidowPose();
+        if (widowEntry._body) {
+          widowEntry._body._pileSeat = -1; // exempt from pile containment
+          Matter.Body.setPosition(widowEntry._body, { x: wp.x + 28, y: wp.y + 56 });
+          Matter.Body.setVelocity(widowEntry._body, { x: 0, y: 0 });
+          Matter.Body.setStatic(widowEntry._body, true);
+        }
+        widowEntry.sprite.classList.remove('shuffleSimple');
+        widowEntry.sprite.setPose(wp);
+        // Store widow tile in session
+        if (widowEntry.tile) {
+          session.moon_widow = [widowEntry.tile.a, widowEntry.tile.b];
+        }
+      }
+    } else {
+      // Normal: spread across 3-5 seconds, wait for ALL to arrive
+      var sweepTime = (3000 + Math.random() * 2000) / (SPEED_MULTIPLIER * SP.pickAnimSpeed);
+      var sweepGap = remaining.length > 1 ? sweepTime / remaining.length : 500;
+      var sweepSlides = [];
+      for (var ri = 0; ri < remaining.length; ri++) {
+        sweepSlides.push(slideTileToSeat(remaining[ri], dealerSeat, shufflerPick, shufflerCenter, color));
+        shufflerPick++;
+        if (ri < remaining.length - 1) {
+          await new Promise(function(r) { setTimeout(r, sweepGap * (0.7 + Math.random() * 0.6)); });
+        }
+      }
+      await Promise.all(sweepSlides);
     }
-    // Wait for every slide to fully complete — no stranded tiles
-    await Promise.all(sweepSlides);
     var ghosts = document.querySelectorAll('.aiPickGhost');
     for (var gi = 0; gi < ghosts.length; gi++) ghosts[gi].remove();
     await new Promise(function(r) { setTimeout(r, 200 / (SPEED_MULTIPLIER * SP.pickAnimSpeed)); });
