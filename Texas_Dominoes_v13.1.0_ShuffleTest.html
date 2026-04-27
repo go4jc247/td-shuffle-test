@@ -20224,52 +20224,47 @@ async function _runPickPhase() {
     hint.textContent = groupLabel;
     counter.textContent = '';
 
-    // Track picks per seat
-    var seatPicks = {};
     var seatCenters = {};
     for (var si = 0; si < seats.length; si++) {
-      seatPicks[seats[si]] = 0;
       seatCenters[seats[si]] = getSeatHandCenter(seats[si]);
     }
 
-    // Round-robin: each seat picks one tile, then next seat, repeat
-    var totalNeeded = seats.length * handSize;
-    var picked = 0;
-    var roundIdx = 0;
+    // Pre-assign all tiles for the group (single controller, no conflicts)
+    var assignments = {}; // seat -> [entry, entry, ...]
+    for (var si = 0; si < seats.length; si++) assignments[seats[si]] = [];
 
-    while (picked < totalNeeded) {
-      // Collect all available tiles ONCE per round
-      var available = [];
-      for (var j = 0; j < pool.length; j++) {
-        if (!pool[j].picked && pool[j]._body && !pool[j]._body.isStatic) available.push(pool[j]);
-      }
-      if (available.length === 0) break;
-
-      // Each seat picks one tile this round (sequentially, no race)
+    for (var pick = 0; pick < handSize; pick++) {
       for (var si = 0; si < seats.length; si++) {
         var aiSeat = seats[si];
-        if (seatPicks[aiSeat] >= handSize) continue;
-
-        // Re-check available (previous seat in this round may have taken one)
-        var stillAvailable = [];
+        var available = [];
         for (var j = 0; j < pool.length; j++) {
-          if (!pool[j].picked && pool[j]._body && !pool[j]._body.isStatic) stillAvailable.push(pool[j]);
+          if (!pool[j].picked && pool[j]._body && !pool[j]._body.isStatic) available.push(pool[j]);
         }
-        if (stillAvailable.length === 0) break;
-
-        var entry = stillAvailable[Math.floor(Math.random() * stillAvailable.length)];
-        var slotIdx = seatPicks[aiSeat];
-        var color = AI_SEAT_COLORS[aiSeat % AI_SEAT_COLORS.length];
-
-        await slideTileToSeat(entry, aiSeat, slotIdx, seatCenters[aiSeat], color);
-        seatPicks[aiSeat]++;
-        picked++;
-
-        // Small pause between picks within a round
-        await new Promise(function(r) { setTimeout(r, (40 + Math.random() * 60) / SPEED_MULTIPLIER); });
+        if (available.length === 0) break;
+        var entry = available[Math.floor(Math.random() * available.length)];
+        entry.picked = true; // reserve immediately
+        assignments[aiSeat].push(entry);
       }
-      roundIdx++;
     }
+
+    // Animate all seats simultaneously — each seat slides tiles one at a time
+    // but all seats go in parallel (visually simultaneous)
+    var slidePromises = [];
+    for (var si = 0; si < seats.length; si++) {
+      (function(aiSeat) {
+        var tiles = assignments[aiSeat];
+        var color = AI_SEAT_COLORS[aiSeat % AI_SEAT_COLORS.length];
+        var center = seatCenters[aiSeat];
+        slidePromises.push((async function() {
+          for (var pick = 0; pick < tiles.length; pick++) {
+            await slideTileToSeat(tiles[pick], aiSeat, pick, center, color);
+            // Small stagger between picks for natural feel
+            await new Promise(function(r) { setTimeout(r, (40 + Math.random() * 60) / SPEED_MULTIPLIER); });
+          }
+        })());
+      })(seats[si]);
+    }
+    await Promise.all(slidePromises);
 
     // Clean up any stray ghost elements
     var ghosts = document.querySelectorAll('.aiPickGhost');
