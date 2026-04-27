@@ -16530,8 +16530,8 @@ var _shuffleGatherRampMs = 2000; // ms to ramp from 0 to full gather force
 // Physics settings — calibrated from Jason's phone testing (Apr 2026)
 var SHUFFLE_PHYSICS = {
   // ── Area ──
-  centerXN: 0.495,
-  centerYN: 0.49,
+  centerXN: 0.50,
+  centerYN: 0.50,
   areaRadius: 0.37,
   showArea: true,
   areaOpacity: 0.25,
@@ -16599,7 +16599,8 @@ var SHUFFLE_PHYSICS = {
   pileDist: 1.00,           // base distance from center circle edge outward (multiplier of centerRadius)
   pileRadius: 0.16,         // pile circle radius as fraction of min(W,H)
   centerCircleRadius: 0.45, // center "DRAW" circle radius as fraction of areaRadius*H
-  pileSeatDist: {},         // per-seat distance override (seat index -> multiplier)
+  pileSeatDist: {0:1.45, 1:0.70, 2:0.50, 3:0.70, 4:0.60, 5:0.60}, // per-seat distance
+  pileSeatYOff: {},         // per-seat Y offset as fraction of H (-0.2 to 0.2)
 };
 // Store defaults for Reset button
 var _shufflePhysicsDefaults = JSON.parse(JSON.stringify(SHUFFLE_PHYSICS));
@@ -20079,12 +20080,14 @@ async function _runPickPhase() {
   _pileSection('Individual Piles');
   var _seatSliders = {};
   if (!SP.pileSeatDist || typeof SP.pileSeatDist !== 'object') SP.pileSeatDist = {};
+  if (!SP.pileSeatYOff || typeof SP.pileSeatYOff !== 'object') SP.pileSeatYOff = {};
 
   for (var ps = 0; ps < playerCount; ps++) {
     var isLocal = (ps === localSeat);
     var seatLabel = isLocal ? 'YOU' : ('P' + seatToPlayer(ps));
     var seatColor = isLocal ? 'rgba(34,197,94,' : AI_SEAT_COLORS[ps % AI_SEAT_COLORS.length];
     var initDist = (SP.pileSeatDist[ps] !== undefined) ? SP.pileSeatDist[ps] : SP.pileDist;
+    var initYOff = (SP.pileSeatYOff[ps] !== undefined) ? SP.pileSeatYOff[ps] : 0;
 
     // Colored label
     var seatHdr = document.createElement('div');
@@ -20092,11 +20095,14 @@ async function _runPickPhase() {
     seatHdr.textContent = seatLabel;
     pilePanel.appendChild(seatHdr);
 
-    (function(seat, initD) {
+    (function(seat, initD, initY) {
       _seatSliders[seat] = _pileSlider(pilePanel, 'Distance', initD, 0.2, 3.0, 0.05, 2, function(v) {
         SP.pileSeatDist[seat] = v;
       });
-    })(ps, initDist);
+      _pileSlider(pilePanel, 'Y Offset', initY, -0.25, 0.25, 0.005, 3, function(v) {
+        SP.pileSeatYOff[seat] = v;
+      });
+    })(ps, initDist, initYOff);
   }
 
   tableEl.appendChild(pilePanel);
@@ -20184,6 +20190,9 @@ async function _runPickPhase() {
     var offset = centerRadius + seatDist * centerRadius;
     var px = centerCx + nx * offset;
     var py = centerCy + ny * offset;
+    // Per-seat Y offset (fraction of H)
+    var yOff = (SP.pileSeatYOff && SP.pileSeatYOff[seat] !== undefined) ? SP.pileSeatYOff[seat] : 0;
+    py += H * yOff;
     return { x: px, y: py };
   }
 
