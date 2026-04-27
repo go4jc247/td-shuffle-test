@@ -19976,6 +19976,9 @@ async function _runPickPhase() {
   _shuffleGatherActive = false;
   _shuffleAreaCenter.r = 0; // disables boundary push-back force
 
+  // Seat colors for AI pick ghosts and pile labels
+  var AI_SEAT_COLORS = ['rgba(239,68,68,', 'rgba(59,130,246,', 'rgba(34,197,94,', 'rgba(234,179,8,', 'rgba(168,85,247,', 'rgba(236,72,153,'];
+
   // Remove old overlay and create a fresh one for pick phase
   var tableEl = document.getElementById('tableMain');
   var oldOverlay = document.getElementById('shufflePhysicsOverlay');
@@ -20494,7 +20497,6 @@ async function _runPickPhase() {
   }
 
   // ── AI pick — single controller, round-robin, colored ghost fingers ──
-  var AI_SEAT_COLORS = ['rgba(239,68,68,', 'rgba(59,130,246,', 'rgba(34,197,94,', 'rgba(234,179,8,', 'rgba(168,85,247,', 'rgba(236,72,153,'];
 
   function slideTileToSeat(entry, aiSeat, slotIdx, seatCenter, color) {
     if (!entry._body) {
