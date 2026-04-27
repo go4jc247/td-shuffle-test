@@ -20104,8 +20104,8 @@ async function _runPickPhase() {
         var br = tableEl.getBoundingClientRect();
         var mx = e.clientX - br.left, my = e.clientY - br.top;
         var entry = findTileAt(mx, my);
-        if (entry) {
-          _pickMouseDrag = { entry: entry, startX: mx, startY: my };
+        if (entry && !entry.picked) {
+          _pickMouseDrag = { entry: entry, startX: mx, startY: my, origPose: entry.sprite.getPose() };
           bringToFront(entry.sprite);
         }
       }
@@ -20123,10 +20123,12 @@ async function _runPickPhase() {
         var br = tableEl.getBoundingClientRect();
         var my = e.clientY - br.top;
         var entry = _pickMouseDrag.entry;
+        var startY = _pickMouseDrag.startY;
         _pickMouseDrag = null;
         if (!entry.picked) {
-          // If dragged into snap zone or just tapped, pick it
-          if (my > snapZoneY || Math.abs(my - _pickMouseDrag?.startY) < 10) {
+          var dragDist = Math.abs(my - startY);
+          // Pick if dragged into snap zone OR if it was just a tap
+          if (my > snapZoneY || dragDist < 15) {
             pickTile(entry);
           }
         }
@@ -20141,7 +20143,10 @@ async function _runPickPhase() {
           var tx = t.clientX - br.left, ty = t.clientY - br.top;
           var entry = findTileAt(tx, ty);
           if (entry && !entry.picked) {
-            _pickDrags[t.identifier] = { entry: entry, startX: tx, startY: ty };
+            _pickDrags[t.identifier] = {
+              entry: entry, startX: tx, startY: ty,
+              origPose: entry.sprite.getPose()
+            };
             bringToFront(entry.sprite);
           }
         }
@@ -20169,13 +20174,11 @@ async function _runPickPhase() {
           var entry = drag.entry;
           if (!entry.picked) {
             var dragDist = Math.sqrt(Math.pow(t.clientX - br.left - drag.startX, 2) + Math.pow(ty - drag.startY, 2));
-            // Pick if dragged into snap zone OR if it was just a tap (small drag distance)
             if (ty > snapZoneY || dragDist < 15) {
               pickTile(entry);
             } else {
               // Return tile to original position
-              var pose = entry.sprite._lastPose || { x: drag.startX - 28, y: drag.startY - 56, s: SP.tileScale, rz: 0, ry: 0 };
-              entry.sprite.setPose(pose);
+              entry.sprite.setPose(drag.origPose);
             }
           }
         }
