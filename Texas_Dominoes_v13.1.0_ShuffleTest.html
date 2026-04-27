@@ -20102,7 +20102,10 @@ async function _runPickPhase() {
 
   function playerPickPhase() {
     return new Promise(function(resolve) {
-      hint.textContent = 'Slide ' + handSize + ' dominoes to your hand';
+      // Don't overwrite hint if it was already set by the group label
+      if (!hint.textContent || hint.textContent.indexOf('slide') < 0) {
+        hint.textContent = 'Slide ' + handSize + ' dominoes to your hand';
+      }
       counter.textContent = '0 / ' + handSize;
 
       function onTouchStart(e) {
@@ -20241,44 +20244,33 @@ async function _runPickPhase() {
 
   async function aiGroupPick(seats, groupLabel) {
     if (seats.length === 0) return;
-    hint.textContent = groupLabel;
-    counter.textContent = '';
+    if (groupLabel) hint.textContent = groupLabel;
 
     var seatCenters = {};
+    var seatPicks = {};
     for (var si = 0; si < seats.length; si++) {
       seatCenters[seats[si]] = getSeatHandCenter(seats[si]);
+      seatPicks[seats[si]] = 0;
     }
 
-    // Pre-assign all tiles for the group (single controller, no conflicts)
-    var assignments = {}; // seat -> [entry, entry, ...]
-    for (var si = 0; si < seats.length; si++) assignments[seats[si]] = [];
-
-    for (var pick = 0; pick < handSize; pick++) {
-      for (var si = 0; si < seats.length; si++) {
-        var aiSeat = seats[si];
-        var available = [];
-        for (var j = 0; j < pool.length; j++) {
-          if (!pool[j].picked && pool[j]._body && !pool[j]._body.isStatic) available.push(pool[j]);
-        }
-        if (available.length === 0) break;
-        var entry = available[Math.floor(Math.random() * available.length)];
-        entry.picked = true; // reserve immediately
-        assignments[aiSeat].push(entry);
-      }
-    }
-
-    // Animate all seats simultaneously — each seat slides tiles one at a time
-    // but all seats go in parallel (visually simultaneous)
+    // Pick tiles one at a time per seat, all seats in parallel
+    // Each seat claims a tile just before sliding it (not pre-assigned)
     var slidePromises = [];
     for (var si = 0; si < seats.length; si++) {
       (function(aiSeat) {
-        var tiles = assignments[aiSeat];
         var color = AI_SEAT_COLORS[aiSeat % AI_SEAT_COLORS.length];
         var center = seatCenters[aiSeat];
         slidePromises.push((async function() {
-          for (var pick = 0; pick < tiles.length; pick++) {
-            await slideTileToSeat(tiles[pick], aiSeat, pick, center, color);
-            // Small stagger between picks for natural feel
+          for (var pick = 0; pick < handSize; pick++) {
+            // Claim one tile right before sliding it
+            var available = [];
+            for (var j = 0; j < pool.length; j++) {
+              if (!pool[j].picked && pool[j]._body && !pool[j]._body.isStatic) available.push(pool[j]);
+            }
+            if (available.length === 0) break;
+            var entry = available[Math.floor(Math.random() * available.length)];
+            entry.picked = true; // claim immediately — other seats see this
+            await slideTileToSeat(entry, aiSeat, pick, center, color);
             await new Promise(function(r) { setTimeout(r, (40 + Math.random() * 60) / SPEED_MULTIPLIER); });
           }
         })());
@@ -20286,10 +20278,8 @@ async function _runPickPhase() {
     }
     await Promise.all(slidePromises);
 
-    // Clean up any stray ghost elements
     var ghosts = document.querySelectorAll('.aiPickGhost');
     for (var gi = 0; gi < ghosts.length; gi++) ghosts[gi].remove();
-
     await new Promise(function(r) { setTimeout(r, 300 / SPEED_MULTIPLIER); });
   }
 
@@ -20335,11 +20325,10 @@ async function _runPickPhase() {
   // Group 1: Opponents of shuffler
   var aiOpponents = opponentSeats.filter(function(s) { return s !== localSeat; });
   if (localIsOpponent) {
-    // Local player picks at the same time as AI opponents
-    // Run player pick and AI opponent pick in parallel
+    hint.textContent = 'Your team picks — slide ' + handSize + ' dominoes';
     await Promise.all([
       playerPickPhase(),
-      aiGroupPick(aiOpponents, 'Opponents picking...')
+      aiGroupPick(aiOpponents, '')  // empty label — player hint takes priority
     ]);
   } else {
     await aiGroupPick(opponentSeats, 'Opponents picking...');
@@ -20348,9 +20337,10 @@ async function _runPickPhase() {
   // Group 2: Partners of shuffler (not shuffler themselves)
   var aiPartners = partnerSeats.filter(function(s) { return s !== localSeat; });
   if (localIsPartner) {
+    hint.textContent = 'Your turn — slide ' + handSize + ' dominoes';
     await Promise.all([
       playerPickPhase(),
-      aiGroupPick(aiPartners, 'Partner(s) picking...')
+      aiGroupPick(aiPartners, '')  // empty label — player hint takes priority
     ]);
   } else if (partnerSeats.length > 0) {
     await aiGroupPick(partnerSeats, 'Partner(s) picking...');
