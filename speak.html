@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Claude Speaks</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee; padding: 20px; margin: 0; }
+  #log { max-height: 70vh; overflow-y: auto; }
+  .msg { background: rgba(255,255,255,0.05); border-left: 3px solid #7c3aed; padding: 10px 14px; margin: 8px 0; border-radius: 0 8px 8px 0; font-size: 15px; line-height: 1.5; }
+  .msg .time { font-size: 11px; color: rgba(255,255,255,0.3); margin-bottom: 4px; }
+  #status { font-size: 12px; color: rgba(255,255,255,0.4); margin-top: 12px; }
+  button { background: #7c3aed; color: white; border: none; padding: 10px 20px; border-radius: 8px; font-size: 14px; cursor: pointer; margin: 4px; }
+  button:active { background: #6d28d9; }
+  select { background: #2a2a4a; color: #eee; border: 1px solid rgba(255,255,255,0.2); padding: 8px; border-radius: 6px; font-size: 13px; }
+</style>
+</head><body>
+<h2 style="margin:0 0 4px;font-size:18px;">Claude Speaks</h2>
+<div style="margin-bottom:12px;">
+  <button id="startBtn" onclick="start()">Start Listening</button>
+  <button onclick="stopSpeaking()">Stop</button>
+  <button onclick="replayLast()">Replay Last</button>
+  <select id="voiceSelect"></select>
+</div>
+<div id="log"></div>
+<div id="status">Tap "Start Listening" to begin</div>
+
+<script>
+var synth = window.speechSynthesis;
+var lastId = 0;
+var polling = false;
+var pollTimer = null;
+var lastMsg = '';
+var voiceSelect = document.getElementById('voiceSelect');
+
+function loadVoices() {
+  var voices = synth.getVoices();
+  voiceSelect.innerHTML = '';
+  // Prefer English voices, put Samantha/Daniel first
+  var preferred = ['Samantha', 'Daniel', 'Karen', 'Moira', 'Tessa'];
+  voices.sort(function(a, b) {
+    var ai = preferred.indexOf(a.name), bi = preferred.indexOf(b.name);
+    if (ai >= 0 && bi < 0) return -1;
+    if (bi >= 0 && ai < 0) return 1;
+    if (ai >= 0 && bi >= 0) return ai - bi;
+    return a.name.localeCompare(b.name);
+  });
+  for (var i = 0; i < voices.length; i++) {
+    if (!voices[i].lang.startsWith('en')) continue;
+    var opt = document.createElement('option');
+    opt.value = voices[i].name;
+    opt.textContent = voices[i].name + ' (' + voices[i].lang + ')';
+    voiceSelect.appendChild(opt);
+  }
+}
+synth.onvoiceschanged = loadVoices;
+loadVoices();
+
+function speak(text) {
+  synth.cancel();
+  var u = new SpeechSynthesisUtterance(text);
+  u.rate = 0.95;
+  u.pitch = 1.0;
+  var selName = voiceSelect.value;
+  var voices = synth.getVoices();
+  for (var i = 0; i < voices.length; i++) {
+    if (voices[i].name === selName) { u.voice = voices[i]; break; }
+  }
+  synth.speak(u);
+  lastMsg = text;
+}
+
+function stopSpeaking() { synth.cancel(); }
+function replayLast() { if (lastMsg) speak(lastMsg); }
+
+function addToLog(text) {
+  var log = document.getElementById('log');
+  var div = document.createElement('div');
+  div.className = 'msg';
+  var time = new Date().toLocaleTimeString();
+  div.innerHTML = '<div class="time">' + time + '</div>' + text.replace(/\n/g, '<br>');
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+function checkForMessages() {
+  fetch('speak_queue.json?t=' + Date.now()).then(function(r) {
+    if (!r.ok) return null;
+    return r.json();
+  }).then(function(data) {
+    if (!data || !data.messages) return;
+    for (var i = 0; i < data.messages.length; i++) {
+      var m = data.messages[i];
+      if (m.id > lastId) {
+        lastId = m.id;
+        addToLog(m.text);
+        speak(m.text);
+      }
+    }
+    document.getElementById('status').textContent = 'Listening... last check: ' + new Date().toLocaleTimeString();
+  }).catch(function() {
+    document.getElementById('status').textContent = 'Waiting for speak_queue.json...';
+  });
+}
+
+function start() {
+  if (polling) return;
+  polling = true;
+  document.getElementById('startBtn').textContent = 'Listening...';
+  document.getElementById('startBtn').style.background = '#22c55e';
+  checkForMessages();
+  pollTimer = setInterval(checkForMessages, 2000);
+}
+</script>
+</body></html>
