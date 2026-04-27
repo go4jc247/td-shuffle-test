@@ -16599,7 +16599,6 @@ var SHUFFLE_PHYSICS = {
   pileDist: 0.70,           // 0=center, 1=at hand edge (fraction of center-to-hand distance)
   pileRadius: 0.08,         // pile circle radius as fraction of min(W,H)
   centerCircleRadius: 0.60, // center "DRAW" circle radius as fraction of areaRadius*H
-  skipFirstShuffle: true,   // skip shuffle animation on first round (tiles start scattered)
 };
 // Store defaults for Reset button
 var _shufflePhysicsDefaults = JSON.parse(JSON.stringify(SHUFFLE_PHYSICS));
@@ -16619,21 +16618,12 @@ var _shufflePhysicsDefaults = JSON.parse(JSON.stringify(SHUFFLE_PHYSICS));
   } catch(e) {}
 })();
 
-var _skipShuffleAnimation = false;
-
 async function performShuffleAnimation() {
   // This is now a physics-driven interactive shuffle
   // Returns a promise that resolves when player clicks "Done" or gather completes
   return new Promise(function(resolve) {
     _shufflePhysicsResolve = resolve;
     _startShufflePhysics();
-
-    // Skip mode: tiles already scattered, just start physics and immediately end for pick
-    if (_skipShuffleAnimation) {
-      _skipShuffleAnimation = false;
-      setTimeout(function() { _endShuffleForPick(); }, 200);
-      return;
-    }
 
     // V13.1: If it's AI's turn to shuffle, auto-mix then auto-end
     var shufflerSeat = session.dealer;
@@ -18013,7 +18003,6 @@ function _createShuffleSettingsPanel(tableEl) {
   slider('Pile Distance', 'pileDist', 0.2, 1.0, 0.05, 2);
   slider('Pile Circle Size', 'pileRadius', 0.03, 0.20, 0.005, 3);
   slider('Center Circle Size', 'centerCircleRadius', 0.2, 1.0, 0.05, 2);
-  toggle('Skip 1st Shuffle', 'skipFirstShuffle');
 
   // ── Save / Load ──
   section('Save / Load');
@@ -18218,7 +18207,6 @@ function _applyShuffleSettingsLive() {
     for (var ci = 0; ci < pickCircles.length; ci++) {
       var pc = pickCircles[ci];
       var seat = parseInt(pc.dataset.seat);
-      // Recompute pile position with current settings
       var hc = _pickPileHandCenters ? _pickPileHandCenters[seat] : null;
       if (hc) {
         var dx = hc.x - W2 / 2, dy = hc.y - H2 / 2;
@@ -19962,8 +19950,8 @@ async function _transitionRoundEnd() {
 // ── V13.1: PICK PHASE ──
 // After shuffle, player clicks face-down tiles to pick their hand,
 // then AI picks going around the table. Tiles are ACTUALLY assigned here.
-var _shufflePickPool = []; // set by startNewHand
 var _pickPileHandCenters = null; // seat -> {x,y} for live settings update
+var _shufflePickPool = []; // set by startNewHand
 
 async function _runPickPhase() {
   const localSeat = getLocalSeat();
@@ -20023,7 +20011,7 @@ async function _runPickPhase() {
   counter.textContent = '0 / ' + handSize;
   tableEl.appendChild(counter);
 
-  // Small settings button — bottom-left, temporary for tuning
+  // Small settings gear button — bottom-left, temporary for tuning pile positions
   var pickSettingsBtn = document.createElement('button');
   pickSettingsBtn.id = 'pickSettingsBtn';
   pickSettingsBtn.textContent = '\u2699';
@@ -24662,7 +24650,6 @@ async function startNewHand(){
   }
 
   // V13.1: Physics shuffle phase
-  _skipShuffleAnimation = (!_reusingSprites && SP.skipFirstShuffle);
   await performShuffleAnimation();
 
   // V13.1: Pick phase — player picks tiles, then AI picks going around
