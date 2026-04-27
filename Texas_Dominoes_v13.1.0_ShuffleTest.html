@@ -19940,22 +19940,18 @@ async function _runPickPhase() {
   _shuffleAreaCenter.r = 0; // disables boundary push-back force
   _shufflePhysicsPointer.active = false; // disables pointer force field
 
-  // Reuse or create overlay
+  // Remove old overlay and create a fresh one for pick phase
   var tableEl = document.getElementById('tableMain');
-  var overlay = document.getElementById('shufflePhysicsOverlay');
-  if (!overlay) {
-    overlay = document.createElement('div');
-    overlay.id = 'pickPhaseOverlay';
-    overlay.style.cssText = 'position:absolute;inset:0;z-index:500;cursor:pointer;touch-action:none;';
-    tableEl.appendChild(overlay);
-  } else {
-    // Clone to remove old shuffle touch handlers
-    var newOverlay = overlay.cloneNode(false);
-    overlay.parentNode.replaceChild(newOverlay, overlay);
-    overlay = newOverlay;
-    overlay.id = 'pickPhaseOverlay';
-    overlay.style.cursor = 'pointer';
-  }
+  var oldOverlay = document.getElementById('shufflePhysicsOverlay');
+  if (oldOverlay) oldOverlay.remove();
+  var oldPickOverlay = document.getElementById('pickPhaseOverlay');
+  if (oldPickOverlay) oldPickOverlay.remove();
+
+  var overlay = document.createElement('div');
+  overlay.id = 'pickPhaseOverlay';
+  overlay.style.cssText = 'position:absolute;inset:0;z-index:600;cursor:pointer;touch-action:none;';
+  tableEl.appendChild(overlay);
+  console.log('[Pick] Overlay created, z-index:600, bodies:', _shufflePhysicsBodies.length, 'pool:', pool.length);
 
   // Hint text
   var hint = document.createElement('div');
@@ -20114,7 +20110,13 @@ async function _runPickPhase() {
         for (var ti = 0; ti < e.changedTouches.length; ti++) {
           var t = e.changedTouches[ti];
           var tx = t.clientX - br.left, ty = t.clientY - br.top;
+          // Count unpicked bodies for debugging
+          var unpickedCount = 0;
+          for (var di = 0; di < pool.length; di++) {
+            if (!pool[di].picked && pool[di]._body) unpickedCount++;
+          }
           var body = findUnpickedBodyAt(tx, ty, 80);
+          console.log('[Pick] touch at', Math.round(tx), Math.round(ty), 'found body:', !!body, 'unpicked:', unpickedCount, 'physics:', _shufflePhysicsActive);
           if (body) {
             _pickGrabs[t.identifier] = { body: body, constraint: grabBody(body, tx, ty), entry: poolEntryForBody(body) };
           }
