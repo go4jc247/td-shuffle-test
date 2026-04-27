@@ -16632,6 +16632,21 @@ async function performShuffleAnimation() {
     if (shufflerSeat !== localSeat) {
       _autoMixAI();
     }
+
+    // Auto-end shuffle after 3 seconds — gather then transition to pick
+    setTimeout(function() {
+      if (_shufflePhysicsActive && _shufflePhysicsResolve) {
+        // Trigger gather first
+        if (!_shuffleGatherActive) {
+          _shuffleGatherActive = true;
+          _shuffleGatherStartTime = performance.now();
+        }
+        // After gather settles, end for pick phase
+        setTimeout(function() {
+          if (_shufflePhysicsActive) _endShuffleForPick();
+        }, 1500 / SPEED_MULTIPLIER);
+      }
+    }, 3000 / SPEED_MULTIPLIER);
   });
 }
 
