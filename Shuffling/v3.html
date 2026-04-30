@@ -367,28 +367,28 @@ body.clean-view #restoreBtn { display:flex !important; }
 <div class="sec">Hand Rig — Wrist Points</div>
 
 <div class="sr">
-  <div class="sr-top"><span class="sr-name">Wrist Point 1 <span class="small">(perimeter index)</span></span><span class="sr-val" id="val-wp1">130</span></div>
+  <div class="sr-top"><span class="sr-name">Wrist Point 1 <span class="small">(perimeter index)</span></span><span class="sr-val" id="val-wp1">158</span></div>
   <div class="sr-row">
     <input class="rn" type="number" id="min-wp1" value="0" step="1">
-    <input type="range" id="sl-wp1" min="0" max="226" step="1" value="130">
+    <input type="range" id="sl-wp1" min="0" max="226" step="1" value="158">
     <input class="rn" type="number" id="max-wp1" value="226" step="1">
   </div>
 </div>
 
 <div class="sr">
-  <div class="sr-top"><span class="sr-name">Wrist Point 2 <span class="small">(perimeter index)</span></span><span class="sr-val" id="val-wp2">190</span></div>
+  <div class="sr-top"><span class="sr-name">Wrist Point 2 <span class="small">(perimeter index)</span></span><span class="sr-val" id="val-wp2">133</span></div>
   <div class="sr-row">
     <input class="rn" type="number" id="min-wp2" value="0" step="1">
-    <input type="range" id="sl-wp2" min="0" max="226" step="1" value="190">
+    <input type="range" id="sl-wp2" min="0" max="226" step="1" value="133">
     <input class="rn" type="number" id="max-wp2" value="226" step="1">
   </div>
 </div>
 
 <div class="sr">
-  <div class="sr-top"><span class="sr-name">Wrist Curve <span class="small">(0=flat, 1=round)</span></span><span class="sr-val" id="val-wcurve">0.50</span></div>
+  <div class="sr-top"><span class="sr-name">Wrist Curve <span class="small">(0=flat, 1=round)</span></span><span class="sr-val" id="val-wcurve">1.00</span></div>
   <div class="sr-row">
     <input class="rn" type="number" id="min-wcurve" value="0.00" step="0.05">
-    <input type="range" id="sl-wcurve" min="0.00" max="1.00" step="0.01" value="0.5">
+    <input type="range" id="sl-wcurve" min="0.00" max="1.00" step="0.01" value="1">
     <input class="rn" type="number" id="max-wcurve" value="1.00" step="0.05">
   </div>
 </div>
@@ -397,29 +397,29 @@ body.clean-view #restoreBtn { display:flex !important; }
 <div class="sec">Arm Rig</div>
 
 <div class="sr">
-  <div class="sr-top"><span class="sr-name">Hand Scale</span><span class="sr-val" id="val-hs">0.12</span></div>
+  <div class="sr-top"><span class="sr-name">Hand Scale</span><span class="sr-val" id="val-hs">0.400</span></div>
   <div class="sr-row">
     <input class="rn" type="number" id="min-hs" value="0.04" step="0.01">
-    <input type="range" id="sl-hs" min="0.04" max="0.30" step="0.005" value="0.12">
-    <input class="rn" type="number" id="max-hs" value="0.30" step="0.01">
+    <input type="range" id="sl-hs" min="0.04" max="0.60" step="0.005" value="0.4">
+    <input class="rn" type="number" id="max-hs" value="0.60" step="0.01">
   </div>
 </div>
 
 <div class="sr">
-  <div class="sr-top"><span class="sr-name">Forearm Width</span><span class="sr-val" id="val-fw">30</span></div>
+  <div class="sr-top"><span class="sr-name">Forearm Width</span><span class="sr-val" id="val-fw">69</span></div>
   <div class="sr-row">
     <input class="rn" type="number" id="min-fw" value="5" step="1">
-    <input type="range" id="sl-fw" min="5" max="80" step="1" value="30">
-    <input class="rn" type="number" id="max-fw" value="80" step="5">
+    <input type="range" id="sl-fw" min="5" max="120" step="1" value="69">
+    <input class="rn" type="number" id="max-fw" value="120" step="5">
   </div>
 </div>
 
 <div class="sr">
-  <div class="sr-top"><span class="sr-name">Shoulder Depth <span class="small">(% below screen)</span></span><span class="sr-val" id="val-sd">1.08</span></div>
+  <div class="sr-top"><span class="sr-name">Shoulder Depth <span class="small">(% below screen)</span></span><span class="sr-val" id="val-sd">1.32</span></div>
   <div class="sr-row">
     <input class="rn" type="number" id="min-sd" value="1.00" step="0.02">
-    <input type="range" id="sl-sd" min="1.00" max="2.00" step="0.02" value="1.08">
-    <input class="rn" type="number" id="max-sd" value="2.00" step="0.05">
+    <input type="range" id="sl-sd" min="1.00" max="3.00" step="0.02" value="1.32">
+    <input class="rn" type="number" id="max-sd" value="3.00" step="0.05">
   </div>
 </div>
 
@@ -1072,12 +1072,12 @@ const RIGHT_HAND_POINTS = [
 
 // Hand rig settings (adjustable via sliders)
 const HR = {
-  wp1: 130,         // wrist point 1 index on left hand perimeter
-  wp2: 190,         // wrist point 2 index on left hand perimeter
-  wristCurve: 0.5,  // 0=flat, 1=round bezier at wrist
-  handScale: 0.12,  // scale of SVG hand shape
-  forearmW: 30,      // forearm width in px
-  shoulderDepth: 1.08, // shoulder Y as fraction of H (>1 = off screen)
+  wp1: 158,         // wrist point 1 index on left hand perimeter
+  wp2: 133,         // wrist point 2 index on left hand perimeter
+  wristCurve: 1,    // 0=flat, 1=round bezier at wrist
+  handScale: 0.4,   // scale of SVG hand shape
+  forearmW: 69,      // forearm width in px
+  shoulderDepth: 1.32, // shoulder Y as fraction of H (>1 = off screen)
 };
 
 const ARM_ANCHORS = [
