@@ -1133,7 +1133,8 @@ function buildHandPath(points, wp1, wp2, wristCurve) {
 // Mirror left hand wrist points to right hand
 // The right hand has a similar structure but mirrored. We map proportionally.
 function mirrorWristIndex(leftIdx, leftLen, rightLen) {
-  return Math.round(leftIdx * rightLen / leftLen) % rightLen;
+  // Hands are mirror images — perimeters trace in opposite directions
+  return (rightLen - Math.round(leftIdx * rightLen / leftLen)) % rightLen;
 }
 
 let cachedLeftHandPath = null;
