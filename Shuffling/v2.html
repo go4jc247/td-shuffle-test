@@ -1,0 +1,1201 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Domino Table - Rainbow Grid v2</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { overflow:hidden; font-family:Georgia,serif; }
+canvas { display:block; cursor:none; }
+
+#topbar {
+position:fixed; top:0; left:0; right:0;
+display:flex; justify-content:center; gap:10px;
+padding:14px; pointer-events:none; z-index:10;
+}
+.btn {
+pointer-events:all;
+background:rgba(0,0,0,0.42); color:rgba(255,255,255,0.82);
+border:1px solid rgba(255,255,255,0.2); padding:8px 22px;
+border-radius:30px; font-family:Georgia,serif; font-size:13px;
+letter-spacing:0.07em; cursor:pointer; backdrop-filter:blur(8px);
+transition:background .15s,color .15s;
+}
+.btn:hover { background:rgba(0,0,0,0.65); color:#fff; }
+#mixBadge {
+position:fixed; top:70px; left:50%; transform:translateX(-50%);
+padding:8px 16px; border-radius:999px; z-index:12; pointer-events:none;
+background:rgba(0,0,0,0.34); border:1px solid rgba(255,255,255,0.14);
+color:rgba(255,255,255,0.92); font-size:12px; letter-spacing:0.05em;
+backdrop-filter:blur(8px); white-space:nowrap;
+}
+#mixBadge.good { box-shadow:0 0 0 1px rgba(120,255,160,0.18) inset; color:rgba(210,255,220,0.98); }
+#mixBadge.mid  { box-shadow:0 0 0 1px rgba(255,225,120,0.18) inset; color:rgba(255,245,210,0.98); }
+#mixBadge.low  { box-shadow:0 0 0 1px rgba(255,140,140,0.14) inset; color:rgba(255,220,220,0.96); }
+#mixBadge.vmid { box-shadow:0 0 0 1px rgba(120,200,255,0.18) inset; color:rgba(225,245,255,0.98); }
+#mixHud {
+position:fixed; left:14px; top:56px; z-index:12;
+background:rgba(0,0,0,0.42); color:rgba(255,255,255,0.9);
+border:1px solid rgba(255,255,255,0.14); border-radius:14px;
+padding:10px 12px; backdrop-filter:blur(8px); min-width:220px;
+font-size:12px; line-height:1.45;
+}
+#mixHud .title { font-size:11px; letter-spacing:0.10em; text-transform:uppercase; color:rgba(255,255,255,0.72); margin-bottom:4px; }
+#mixHud .row { display:flex; justify-content:space-between; gap:10px; }
+#mixHud .label { color:rgba(255,255,255,0.60); }
+#mixHud .value { color:rgba(255,255,255,0.96); font-weight:bold; }
+#mixHud .meter { height:8px; background:rgba(255,255,255,0.10); border-radius:999px; overflow:hidden; margin:7px 0 6px; }
+#mixHud .fill { height:100%; width:0%; background:linear-gradient(90deg, rgba(255,120,120,0.9), rgba(255,215,120,0.9), rgba(120,255,160,0.9), rgba(120,210,255,0.95)); transition:width .12s linear; }
+#mixHud .small { color:rgba(255,255,255,0.42); font-size:10px; margin-top:4px; }
+
+#panel {
+position:fixed; top:0; right:-340px; bottom:0; width:320px;
+background:rgba(4,16,8,0.97);
+border-left:1px solid rgba(255,255,255,0.1);
+transition:right .28s cubic-bezier(.4,0,.2,1);
+z-index:200; display:flex; flex-direction:column;
+}
+#panel.open { right:0; }
+#ph {
+display:flex; align-items:center; justify-content:space-between;
+padding:18px 18px 14px; border-bottom:1px solid rgba(255,255,255,0.08); flex-shrink:0;
+}
+#ph h2 { color:rgba(255,255,255,0.88); font-size:13px; letter-spacing:.14em; text-transform:uppercase; }
+#closeBtn {
+background:rgba(255,255,255,0.08); border:none; color:rgba(255,255,255,0.6);
+width:28px; height:28px; border-radius:50%; font-size:14px; cursor:pointer;
+display:flex; align-items:center; justify-content:center; transition:background .15s;
+}
+#closeBtn:hover { background:rgba(255,80,80,0.3); color:#fff; }
+#pb { overflow-y:auto; padding:14px 18px 28px; flex:1; }
+#pb::-webkit-scrollbar { width:4px; }
+#pb::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.14); border-radius:2px; }
+
+.sec { color:rgba(80,200,110,0.65); font-size:9.5px; letter-spacing:.18em; text-transform:uppercase; margin:16px 0 8px; }
+.sr { margin-bottom:15px; }
+.sr-top { display:flex; justify-content:space-between; margin-bottom:5px; }
+.sr-name { color:rgba(255,255,255,0.56); font-size:11.5px; letter-spacing:.03em; }
+.sr-val  { color:rgba(80,210,110,0.95); font-size:12px; font-weight:bold; min-width:44px; text-align:right; }
+.sr-row  { display:flex; align-items:center; gap:6px; }
+.rn {
+width:52px; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.11);
+border-radius:4px; color:rgba(255,255,255,0.55); font-size:10px; padding:3px 5px;
+text-align:center; outline:none; font-family:Georgia,serif; transition:border-color .15s;
+}
+.rn:focus { border-color:rgba(80,210,110,0.5); color:rgba(255,255,255,0.85); }
+input[type=range] {
+flex:1; -webkit-appearance:none; height:3px;
+background:rgba(255,255,255,0.14); border-radius:2px; outline:none; cursor:pointer;
+}
+input[type=range]::-webkit-slider-thumb {
+-webkit-appearance:none; width:14px; height:14px; border-radius:50%; background:#50d070;
+border:2px solid rgba(255,255,255,0.2); cursor:pointer; transition:transform .1s;
+}
+input[type=range]::-webkit-slider-thumb:hover { transform:scale(1.25); }
+input[type=color] {
+width:38px; height:30px; border:1px solid rgba(255,255,255,0.18); border-radius:5px;
+cursor:pointer; padding:2px; background:rgba(255,255,255,0.05); flex-shrink:0;
+}
+hr.dv { border:none; border-top:1px solid rgba(255,255,255,0.06); margin:14px 0; }
+.small { color:rgba(255,255,255,0.32); font-size:10px; }
+
+.hint {
+position:fixed; bottom:20px; left:50%; transform:translateX(-50%);
+color:rgba(255,255,255,0.28); font-size:12px; letter-spacing:.06em;
+pointer-events:none; white-space:nowrap;
+}
+#overlay { display:none; position:fixed; inset:0; z-index:190; }
+#overlay.show { display:block; }
+
+#exporter {
+position:fixed; left:18px; bottom:18px; width:min(480px, calc(100vw - 36px));
+z-index:160; background:rgba(0,0,0,0.52); border:1px solid rgba(255,255,255,0.16);
+border-radius:16px; backdrop-filter:blur(10px); padding:12px; display:none;
+box-shadow:0 12px 40px rgba(0,0,0,0.28);
+}
+#exporter.show { display:block; }
+#exporterHead { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; gap:10px; }
+#exporterTitle { color:rgba(255,255,255,0.92); font-size:12px; letter-spacing:0.08em; text-transform:uppercase; }
+#datasetMeta { color:rgba(255,255,255,0.68); font-size:11px; }
+#exportBox {
+width:100%; min-height:180px; max-height:46vh; resize:vertical; border:none; outline:none;
+border-radius:10px; padding:10px 12px; background:rgba(8,18,10,0.9); color:rgba(230,255,235,0.96);
+font:11px/1.35 Menlo, Consolas, monospace;
+}
+#exportActions { display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; }
+#miniStats {
+position:fixed; left:18px; top:88px; z-index:18; padding:10px 12px; border-radius:14px;
+background:rgba(0,0,0,0.38); border:1px solid rgba(255,255,255,0.13); backdrop-filter:blur(9px);
+color:rgba(255,255,255,0.9); font-size:11px; line-height:1.35; min-width:220px;
+}
+#miniStats .label { color:rgba(180,255,195,0.92); }
+#miniStats .muted { color:rgba(255,255,255,0.64); }
+.hud-hidden #mixBadge, .hud-hidden #mixHud, .hud-hidden #miniStats, .hud-hidden #topbar .hud-hideable { display:none !important; }
+
+#restoreBtn {
+display:none; position:fixed; bottom:18px; right:18px; z-index:999;
+background:rgba(0,0,0,0.55); color:rgba(255,255,255,0.7);
+border:1px solid rgba(255,255,255,0.2); width:42px; height:42px;
+border-radius:50%; font-size:18px; cursor:pointer;
+backdrop-filter:blur(8px); transition:background .15s,color .15s;
+align-items:center; justify-content:center;
+}
+#restoreBtn:hover { background:rgba(0,0,0,0.8); color:#fff; }
+body.clean-view #topbar,
+body.clean-view #mixBadge,
+body.clean-view #mixHud,
+body.clean-view #miniStats,
+body.clean-view #exporter,
+body.clean-view .hint { display:none !important; }
+body.clean-view #restoreBtn { display:flex !important; }
+</style>
+
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="topbar">
+  <button class="btn" id="shuffleBtn">⇌ &nbsp;Shuffle</button>
+  <button class="btn" id="gatherBtn">⌬ &nbsp;Gather</button>
+  <button class="btn" id="colorBtn">🌈 &nbsp;Color: Off</button>
+  <button class="btn hud-hideable" id="saveMixBtn">💾 &nbsp;Save Mix</button>
+  <button class="btn hud-hideable" id="exportBtn">📋 &nbsp;Export Data</button>
+  <button class="btn hud-hideable" id="saveSettingsBtn">🖫 &nbsp;Save Settings</button>
+  <button class="btn hud-hideable" id="exportSettingsBtn">📤 &nbsp;Export Physics</button>
+  <button class="btn" id="hudToggleBtn">👁 &nbsp;Hide HUD</button>
+  <button class="btn" id="hideAllBtn">✦ &nbsp;Clean View</button>
+  <button class="btn" id="settingsBtn">⚙ &nbsp;Physics</button>
+</div>
+<div id="mixBadge" class="low">Data mode - no thresholds</div>
+<div id="mixHud">
+  <div class="title">Mix Meter</div>
+  <div class="row"><span class="label">Level</span><span class="value" id="mixLevel">Unmixed</span></div>
+  <div class="meter"><div class="fill" id="mixFill"></div></div>
+  <div class="row"><span class="label">Median stretch</span><span class="value" id="mixMedian">0.00x</span></div>
+  <div class="row"><span class="label">Links >= 0.9x</span><span class="value" id="mixOver09">0</span></div>
+  <div class="row"><span class="label">Links >= 1.0x</span><span class="value" id="mixOver10">0</span></div>
+  <div class="row"><span class="label">Links >= 1.5x</span><span class="value" id="mixOver15">0</span></div>
+  <div class="row"><span class="label">Links >= 2.0x</span><span class="value" id="mixOver20">0</span></div>
+  <div class="small">Built from your current unmixed and thoroughly mixed samples.</div>
+</div>
+<div id="miniStats">
+  <div><span class="label">Fixed links:</span> <span id="statLinks">110</span></div>
+  <div><span class="label">Samples saved:</span> <span id="statSamples">0</span></div>
+  <div><span class="label">Mean stretch:</span> <span id="statMeanStretch">1.00x</span></div>
+  <div><span class="label">Median stretch:</span> <span id="statMedianStretch">1.00x</span></div>
+  <div><span class="label">Min / Max:</span> <span id="statMinMax">1.00x / 1.00x</span></div>
+  <div class="muted">Save snapshots after a mix. Export accumulates every saved sample.</div>
+</div>
+<div id="exporter">
+  <div id="exporterHead">
+    <div>
+      <div id="exporterTitle">Mix Data Export</div>
+      <div id="datasetMeta">No saved samples yet.</div>
+    </div>
+    <button class="btn" id="closeExportBtn">✕ &nbsp;Close</button>
+  </div>
+  <textarea id="exportBox" spellcheck="false"></textarea>
+  <div id="exportActions">
+    <button class="btn" id="copyExportBtn">Copy to Clipboard</button>
+    <button class="btn" id="refreshExportBtn">Refresh Text</button>
+    <button class="btn" id="clearExportBtn">Clear Saved Samples</button>
+  </div>
+</div>
+<div id="overlay"></div>
+<button id="restoreBtn" title="Restore UI">✦</button>
+
+<div id="panel">
+  <div id="ph">
+    <h2>Physics Settings</h2>
+    <button id="closeBtn">✕</button>
+  </div>
+  <div id="pb">
+
+<div class="sec">Influence Hand - Grab</div>
+
+<div class="sr">
+  <div class="sr-top"><span class="sr-name">Radius &nbsp;<span class="small">(scroll wheel)</span></span><span class="sr-val" id="val-ir">121</span></div>
+  <div class="sr-row">
+    <input class="rn" type="number" id="min-ir" value="20" step="5">
+    <input type="range" id="sl-ir" min="20" max="300" step="1" value="121">
+    <input class="rn" type="number" id="max-ir" value="300" step="5">
+  </div>
+</div>
+
+<div class="sr">
+  <div class="sr-top"><span class="sr-name">Grab Strength</span><span class="sr-val" id="val-gs">0.041</span></div>
+  <div class="sr-row">
+    <input class="rn" type="number" id="min-gs" value="0.000" step="0.001">
+    <input type="range" id="sl-gs" min="0.000" max="0.100" step="0.001" value="0.041">
+    <input class="rn" type="number" id="max-gs" value="0.100" step="0.005">
+  </div>
+</div>
+
+<div class="sr">
+  <div class="sr-top"><span class="sr-name">Grab Falloff &nbsp;<span class="small">(1=flat - 6=steep)</span></span><span class="sr-val" id="val-fp">2.0</span></div>
+  <div class="sr-row">
+    <input class="rn" type="number" id="min-fp" value="0.5" step="0.1">
+    <input type="range" id="sl-fp" min="0.5" max="8.0" step="0.1" value="2">
+    <input class="rn" type="number" id="max-fp" value="8.0" step="0.5">
+  </div>
+</div>
+
+<hr class="dv">
+<div class="sec">Soft Perimeter</div>
+
+<div class="sr">
+  <div class="sr-top"><span class="sr-name">Repulsion Zone <span class="small">(px from edge)</span></span><span class="sr-val" id="val-ez">30</span></div>
+  <div class="sr-row">
+    <input class="rn" type="number" id="min-ez" value="0" step="10">
+    <input type="range" id="sl-ez" min="0" max="300" step="5" value="30">
+    <input class="rn" type="number" id="max-ez" value="300" step="10">
+  </div>
+</div>
+
+<div class="sr">
+  <div class="sr-top"><span class="sr-name">Elasticity <span class="small">(1.0=perfect bounce)</span></span><span class="sr-val" id="val-ef">0.06</span></div>
+  <div class="sr-row">
+    <input class="rn" type="number" id="min-ef" value="0.00" step="0.01">
+    <input type="range" id="sl-ef" min="0.00" max="1.00" step="0.01" value="0.06">
+    <input class="rn" type="number" id="max-ef" value="1.00" step="0.05">
+  </div>
+</div>
+
+<hr class="dv">
+<div class="sec">Influence Hand - Overlay</div>
+
+<div class="sr">
+  <div class="sr-top"><span class="sr-name">Color</span></div>
+  <div class="sr-row" style="gap:10px">
+    <input type="color" id="hand-color" value="#ffffff">
+    <span class="small" style="flex:1">choose any color for the overlay</span>
+  </div>
+</div>
+
+<div class="sr">
+  <div class="sr-top"><span class="sr-name">Opacity</span><span class="sr-val" id="val-op">0.00</span></div>
+  <div class="sr-row">
+    <input class="rn" type="number" id="min-op" value="0.00" step="0.05">
+    <input type="range" id="sl-op" min="0.00" max="1.00" step="0.01" value="0">
+    <input class="rn" type="number" id="max-op" value="1.00" step="0.05">
+  </div>
+</div>
+
+<div class="sr">
+  <div class="sr-top"><span class="sr-name">Feather &nbsp;<span class="small">(1=flat - 6=steep)</span></span><span class="sr-val" id="val-of">2.0</span></div>
+  <div class="sr-row">
+    <input class="rn" type="number" id="min-of" value="0.5" step="0.1">
+    <input type="range" id="sl-of" min="0.5" max="8.0" step="0.1" value="2">
+    <input class="rn" type="number" id="max-of" value="8.0" step="0.5">
+  </div>
+</div>
+
+<hr class="dv">
+<div class="sec">Felt Feel</div>
+
+<div class="sr">
+  <div class="sr-top"><span class="sr-name">Air Resistance</span><span class="sr-val" id="val-air">0.105</span></div>
+  <div class="sr-row">
+    <input class="rn" type="number" id="min-air" value="0.00" step="0.01">
+    <input type="range" id="sl-air" min="0.00" max="1.00" step="0.001" value="0.105">
+    <input class="rn" type="number" id="max-air" value="1.00" step="0.01">
+  </div>
+</div>
+
+<div class="sr">
+  <div class="sr-top"><span class="sr-name">Tile Friction</span><span class="sr-val" id="val-fric">0.00</span></div>
+  <div class="sr-row">
+    <input class="rn" type="number" id="min-fric" value="0.00" step="0.05">
+    <input type="range" id="sl-fric" min="0.00" max="1.00" step="0.01" value="0">
+    <input class="rn" type="number" id="max-fric" value="1.00" step="0.05">
+  </div>
+</div>
+
+<div class="sr">
+  <div class="sr-top"><span class="sr-name">Bounciness</span><span class="sr-val" id="val-bounce">1.00</span></div>
+  <div class="sr-row">
+    <input class="rn" type="number" id="min-bounce" value="0.00" step="0.01">
+    <input type="range" id="sl-bounce" min="0.00" max="1.00" step="0.01" value="1">
+    <input class="rn" type="number" id="max-bounce" value="1.00" step="0.05">
+  </div>
+</div>
+
+<hr class="dv">
+<div class="sec">Collision Precision</div>
+
+<div class="sr">
+  <div class="sr-top"><span class="sr-name">Position Iterations</span><span class="sr-val" id="val-pos">14</span></div>
+  <div class="sr-row">
+    <input class="rn" type="number" id="min-pos" value="1" step="1">
+    <input type="range" id="sl-pos" min="1" max="60" step="1" value="14">
+    <input class="rn" type="number" id="max-pos" value="60" step="1">
+  </div>
+</div>
+
+<div class="sr">
+  <div class="sr-top"><span class="sr-name">Velocity Iterations</span><span class="sr-val" id="val-vel">14</span></div>
+  <div class="sr-row">
+    <input class="rn" type="number" id="min-vel" value="1" step="1">
+    <input type="range" id="sl-vel" min="1" max="60" step="1" value="14">
+    <input class="rn" type="number" id="max-vel" value="60" step="1">
+  </div>
+</div>
+
+<hr class="dv">
+<div class="sec">Shuffle</div>
+
+<div class="sr">
+  <div class="sr-top"><span class="sr-name">Shuffle Force</span><span class="sr-val" id="val-shuf">0.15</span></div>
+  <div class="sr-row">
+    <input class="rn" type="number" id="min-shuf" value="0.00" step="0.01">
+    <input type="range" id="sl-shuf" min="0.00" max="1.00" step="0.01" value="0.15">
+    <input class="rn" type="number" id="max-shuf" value="1.00" step="0.01">
+  </div>
+</div>
+
+<div class="sr">
+  <div class="sr-top"><span class="sr-name">Spin Amount</span><span class="sr-val" id="val-spin">0.75</span></div>
+  <div class="sr-row">
+    <input class="rn" type="number" id="min-spin" value="0.00" step="0.05">
+    <input type="range" id="sl-spin" min="0.00" max="3.00" step="0.05" value="0.75">
+    <input class="rn" type="number" id="max-spin" value="3.00" step="0.05">
+  </div>
+</div>
+
+<hr class="dv">
+<div class="sec">Hand Rig</div>
+
+<div class="sr">
+  <div class="sr-top"><span class="sr-name">Hand Size</span><span class="sr-val" id="val-hs">3.00</span></div>
+  <div class="sr-row">
+    <input class="rn" type="number" id="min-hs" value="0.3" step="0.1">
+    <input type="range" id="sl-hs" min="0.3" max="3.0" step="0.05" value="3">
+    <input class="rn" type="number" id="max-hs" value="3.0" step="0.1">
+  </div>
+</div>
+
+<div class="sr">
+  <div class="sr-top"><span class="sr-name">Forearm Size</span><span class="sr-val" id="val-fas">3.00</span></div>
+  <div class="sr-row">
+    <input class="rn" type="number" id="min-fas" value="0.3" step="0.1">
+    <input type="range" id="sl-fas" min="0.3" max="3.0" step="0.05" value="3">
+    <input class="rn" type="number" id="max-fas" value="3.0" step="0.1">
+  </div>
+</div>
+
+<div class="sr">
+  <div class="sr-top"><span class="sr-name">Upper Arm Size</span><span class="sr-val" id="val-uas">3.00</span></div>
+  <div class="sr-row">
+    <input class="rn" type="number" id="min-uas" value="0.3" step="0.1">
+    <input type="range" id="sl-uas" min="0.3" max="3.0" step="0.05" value="3">
+    <input class="rn" type="number" id="max-uas" value="3.0" step="0.1">
+  </div>
+</div>
+
+<hr class="dv">
+<div class="sec">Domino Size</div>
+
+<div class="sr">
+  <div class="sr-top"><span class="sr-name">Tile Scale</span><span class="sr-val" id="val-ds">1.00</span></div>
+  <div class="sr-row">
+    <input class="rn" type="number" id="min-ds" value="0.4" step="0.1">
+    <input type="range" id="sl-ds" min="0.4" max="2.5" step="0.05" value="1">
+    <input class="rn" type="number" id="max-ds" value="2.5" step="0.1">
+  </div>
+</div>
+
+<hr class="dv">
+<div class="sec">Gather</div>
+
+<div class="sr">
+  <div class="sr-top"><span class="sr-name">Compress Radius <span class="small">(px from center)</span></span><span class="sr-val" id="val-gr">170</span></div>
+  <div class="sr-row">
+    <input class="rn" type="number" id="min-gr" value="50" step="10">
+    <input type="range" id="sl-gr" min="50" max="600" step="5" value="170">
+    <input class="rn" type="number" id="max-gr" value="600" step="10">
+  </div>
+</div>
+
+<div class="sr">
+  <div class="sr-top"><span class="sr-name">Compress Speed <span class="small">(seconds)</span></span><span class="sr-val" id="val-gspd">0.9</span></div>
+  <div class="sr-row">
+    <input class="rn" type="number" id="min-gspd" value="0.2" step="0.1">
+    <input type="range" id="sl-gspd" min="0.2" max="4.0" step="0.1" value="0.9">
+    <input class="rn" type="number" id="max-gspd" value="4.0" step="0.1">
+  </div>
+</div>
+
+<div class="sr">
+  <div class="sr-top"><span class="sr-name">Push Force</span><span class="sr-val" id="val-gf">0.06</span></div>
+  <div class="sr-row">
+    <input class="rn" type="number" id="min-gf" value="0.00" step="0.01">
+    <input type="range" id="sl-gf" min="0.00" max="0.50" step="0.01" value="0.06">
+    <input class="rn" type="number" id="max-gf" value="0.50" step="0.01">
+  </div>
+</div>
+
+<div class="sr">
+  <div class="sr-top"><span class="sr-name">Ring Opacity <span class="small">(0 = hidden)</span></span><span class="sr-val" id="val-gro">0.00</span></div>
+  <div class="sr-row">
+    <input class="rn" type="number" id="min-gro" value="0.00" step="0.05">
+    <input type="range" id="sl-gro" min="0.00" max="1.00" step="0.01" value="0">
+    <input class="rn" type="number" id="max-gro" value="1.00" step="0.05">
+  </div>
+</div>
+
+<div class="sr">
+  <div class="sr-top"><span class="sr-name">Ring Color</span></div>
+  <div class="sr-row" style="gap:10px">
+    <input type="color" id="ring-color" value="#ffffff">
+    <span class="small" style="flex:1">color of the gather ring</span>
+  </div>
+</div>
+
+  </div>
+</div>
+
+<div class="hint">Move hand over tiles to grab · Scroll = resize · 🌈 toggles color · ⚙ Physics to tune</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W = canvas.width = window.innerWidth;
+let H = canvas.height = window.innerHeight;
+
+const { Engine, Bodies, Body, World } = Matter;
+
+const DOMINO_SETTINGS_KEY = 'domino_physics_settings_v1';
+
+const S = {
+  inflRadius: 121,
+  grabStrength: 0.041,
+  grabFalloff: 2,
+  handColor: '#ffffff',
+  handOpacity: 0,
+  overlayFeather: 2,
+  frictionAir: 0.105,
+  friction: 0,
+  restitution: 1,
+  posIter: 14,
+  velIter: 14,
+  edgeZone: 30,
+  edgeForce: 0.06,
+  domScale: 1,
+  gatherEndR: 170,
+  ringOpacity: 0,
+  ringColor: "#ffffff",
+  gatherSpeed: 0.9,
+  gatherForce: 0.06,
+  shuffleForce: 0.15,
+  shuffleSpin: 0.75,
+  handScale: 3,
+  forearmScale: 3,
+  upperArmScale: 3,
+  showColors: false,
+  inwardTiltDeg: 15,
+  mixedEnoughThreshold: 72,
+};
+
+const engine = Engine.create({
+  gravity: { x:0, y:0 },
+  positionIterations: S.posIter,
+  velocityIterations: S.velIter,
+  constraintIterations: 6,
+});
+const world = engine.world;
+
+const WALL = 600;
+let wallBodies = [];
+
+function buildWalls() {
+  wallBodies.forEach(w => World.remove(world, w));
+  const pad = S.edgeZone;
+  const wo = { isStatic:true, restitution:S.edgeForce, friction:0.05, frictionStatic:0.05 };
+  wallBodies = [
+    Bodies.rectangle(W/2, pad - WALL/2, W + WALL*2, WALL, wo),
+    Bodies.rectangle(W/2, H - pad + WALL/2, W + WALL*2, WALL, wo),
+    Bodies.rectangle(pad - WALL/2, H/2, WALL, H + WALL*2, wo),
+    Bodies.rectangle(W - pad + WALL/2, H/2, WALL, H + WALL*2, wo),
+  ];
+  World.add(world, wallBodies);
+}
+buildWalls();
+
+let DW = 28, DH = 56;
+let TILE_R = Math.hypot(DW, DH) / 2;
+
+const COLUMN_COLORS = ['#e74c3c', '#f39c12', '#f1c40f', '#2ecc71', '#3498db', '#8e44ad'];
+
+function recomputeTileMetrics() {
+  DW = Math.round(28 * S.domScale);
+  DH = Math.round(56 * S.domScale);
+  TILE_R = Math.hypot(DW, DH) / 2;
+}
+recomputeTileMetrics();
+
+function gridSlots() {
+  const cols = 6;
+  const rows = 6;
+  const usableW = W - S.edgeZone * 2;
+  const usableH = H - S.edgeZone * 2;
+  const stepX = Math.max(DW + 10, usableW / (cols + 1));
+  const stepY = Math.max(DH + 10, usableH / (rows + 1));
+  const totalW = stepX * (cols - 1);
+  const totalH = stepY * (rows - 1);
+  const startX = W / 2 - totalW / 2;
+  const startY = H / 2 - totalH / 2;
+  const slots = [];
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      slots.push({
+        row,
+        col,
+        x: startX + col * stepX,
+        y: startY + row * stepY,
+        color: COLUMN_COLORS[col],
+      });
+    }
+  }
+  return slots;
+}
+
+function createDominoFromSlot(slot, angle = 0) {
+  const body = Bodies.rectangle(
+    slot.x,
+    slot.y,
+    DW,
+    DH,
+    {
+      frictionAir: S.frictionAir,
+      friction: S.friction,
+      restitution: S.restitution,
+      density: 0.005,
+      angle,
+    }
+  );
+  body.renderColor = slot.color;
+  body.gridColumn = slot.col;
+  body.gridRow = slot.row;
+  return body;
+}
+
+function initialDominoes() {
+  return gridSlots().map(slot => createDominoFromSlot(slot, 0));
+}
+
+const dominoes = initialDominoes();
+World.add(world, dominoes);
+const DOMINO_DATA_KEY = 'domino_mix_dataset_v1';
+
+function gridIndex(row, col) { return row * 6 + col; }
+
+function buildOriginalLinkPairs() {
+  const pairs = [];
+  for (let row = 0; row < 6; row++) {
+    for (let col = 0; col < 6; col++) {
+      const a = gridIndex(row, col);
+      for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) {
+          if (dr === 0 && dc === 0) continue;
+          const nr = row + dr, nc = col + dc;
+          if (nr < 0 || nr > 5 || nc < 0 || nc > 5) continue;
+          const b = gridIndex(nr, nc);
+          if (a < b) pairs.push([a, b]);
+        }
+      }
+    }
+  }
+  return pairs;
+}
+
+const ORIGINAL_SLOTS = gridSlots();
+const FIXED_LINKS = buildOriginalLinkPairs().map(([a, b]) => {
+  const sa = ORIGINAL_SLOTS[a], sb = ORIGINAL_SLOTS[b];
+  const dx = sb.x - sa.x, dy = sb.y - sa.y;
+  return {
+    a, b,
+    originalLength: Math.hypot(dx, dy),
+    type: (sa.row === sb.row || sa.col === sb.col) ? 'orth' : 'diag'
+  };
+});
+
+function quantile(sorted, q) {
+  if (!sorted.length) return 0;
+  const pos = (sorted.length - 1) * q;
+  const base = Math.floor(pos);
+  const rest = pos - base;
+  return sorted[base + 1] !== undefined
+    ? sorted[base] + (sorted[base + 1] - sorted[base]) * rest
+    : sorted[base];
+}
+
+function getLiveLinkMetrics() {
+  const currentLengths = [];
+  const stretchRatios = [];
+  let sumLen = 0, sumRatio = 0;
+  FIXED_LINKS.forEach(link => {
+    const pa = dominoes[link.a].position;
+    const pb = dominoes[link.b].position;
+    const len = Math.hypot(pb.x - pa.x, pb.y - pa.y);
+    const ratio = len / link.originalLength;
+    currentLengths.push(len);
+    stretchRatios.push(ratio);
+    sumLen += len;
+    sumRatio += ratio;
+  });
+  const sortedLen = [...currentLengths].sort((a,b) => a-b);
+  const sortedRatio = [...stretchRatios].sort((a,b) => a-b);
+  return {
+    linkCount: FIXED_LINKS.length,
+    currentLengths,
+    stretchRatios,
+    meanLength: sumLen / FIXED_LINKS.length,
+    meanStretch: sumRatio / FIXED_LINKS.length,
+    medianLength: quantile(sortedLen, 0.5),
+    medianStretch: quantile(sortedRatio, 0.5),
+    q1Stretch: quantile(sortedRatio, 0.25),
+    q3Stretch: quantile(sortedRatio, 0.75),
+    minStretch: sortedRatio[0],
+    maxStretch: sortedRatio[sortedRatio.length - 1],
+    over080: stretchRatios.filter(v => v >= 0.80).length,
+    over090: stretchRatios.filter(v => v >= 0.90).length,
+    over100: stretchRatios.filter(v => v >= 1.00).length,
+    over125: stretchRatios.filter(v => v >= 1.25).length,
+    over150: stretchRatios.filter(v => v >= 1.50).length,
+    over175: stretchRatios.filter(v => v >= 1.75).length,
+    over200: stretchRatios.filter(v => v >= 2.00).length,
+    over250: stretchRatios.filter(v => v >= 2.50).length,
+  };
+}
+
+function settingsSnapshot() {
+  return {
+    inflRadius: S.inflRadius,
+    grabStrength: S.grabStrength,
+    grabFalloff: S.grabFalloff,
+    handOpacity: S.handOpacity,
+    overlayFeather: S.overlayFeather,
+    frictionAir: S.frictionAir,
+    friction: S.friction,
+    restitution: S.restitution,
+    edgeZone: S.edgeZone,
+    edgeForce: S.edgeForce,
+    domScale: S.domScale,
+    gatherEndR: S.gatherEndR,
+    ringOpacity: S.ringOpacity,
+    ringColor: S.ringColor,
+    gatherSpeed: S.gatherSpeed,
+    gatherForce: S.gatherForce,
+    shuffleForce: S.shuffleForce,
+    shuffleSpin: S.shuffleSpin,
+    showColors: S.showColors,
+    handScale: S.handScale,
+    forearmScale: S.forearmScale,
+    upperArmScale: S.upperArmScale,
+  };
+}
+
+function dominoPositionsSnapshot() {
+  return dominoes.map((d, i) => ({
+    index: i,
+    row: d.gridRow,
+    col: d.gridColumn,
+    x: +d.position.x.toFixed(2),
+    y: +d.position.y.toFixed(2),
+    angle: +d.angle.toFixed(4),
+  }));
+}
+
+function loadSavedSettings() {
+  try {
+    const raw = localStorage.getItem(DOMINO_SETTINGS_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+function saveCurrentSettings() {
+  localStorage.setItem(DOMINO_SETTINGS_KEY, JSON.stringify(settingsSnapshot()));
+}
+
+function applySavedSettingsToUI(saved) {
+  if (!saved || typeof saved !== 'object') return;
+  const sliderMap = [
+    ['sl-ir','val-ir','inflRadius',0], ['sl-gs','val-gs','grabStrength',3], ['sl-fp','val-fp','grabFalloff',1],
+    ['sl-ez','val-ez','edgeZone',0], ['sl-ef','val-ef','edgeForce',2], ['sl-op','val-op','handOpacity',2],
+    ['sl-of','val-of','overlayFeather',1], ['sl-air','val-air','frictionAir',3], ['sl-fric','val-fric','friction',2],
+    ['sl-bounce','val-bounce','restitution',2], ['sl-pos','val-pos','posIter',0], ['sl-vel','val-vel','velIter',0],
+    ['sl-shuf','val-shuf','shuffleForce',2], ['sl-spin','val-spin','shuffleSpin',2], ['sl-ds','val-ds','domScale',2],
+    ['sl-gr','val-gr','gatherEndR',0], ['sl-gspd','val-gspd','gatherSpeed',1], ['sl-gf','val-gf','gatherForce',2], ['sl-gro','val-gro','ringOpacity',2],
+    ['sl-hs','val-hs','handScale',2], ['sl-fas','val-fas','forearmScale',2], ['sl-uas','val-uas','upperArmScale',2]
+  ];
+  sliderMap.forEach(([slId, valId, key, dec]) => {
+    if (!(key in saved)) return;
+    const sl = document.getElementById(slId);
+    const vl = document.getElementById(valId);
+    if (!sl) return;
+    sl.value = saved[key];
+    if (vl) vl.textContent = dec === 0 ? Math.round(saved[key]) : Number(saved[key]).toFixed(dec);
+    S[key] = Number(saved[key]);
+  });
+  if ('showColors' in saved) S.showColors = !!saved.showColors;
+  if ('ringOpacity' in saved) S.ringOpacity = Number(saved.ringOpacity);
+  if ('ringColor' in saved) S.ringColor = saved.ringColor;
+  const rc = document.getElementById('ring-color');
+  if (rc) rc.value = S.ringColor;
+  if ('handColor' in saved) S.handColor = saved.handColor;
+  const hc = document.getElementById('hand-color');
+  if (hc) hc.value = S.handColor;
+  syncColorBtn();
+  engine.positionIterations = Math.round(S.posIter);
+  engine.velocityIterations = Math.round(S.velIter);
+  dominoes.forEach(d => { d.frictionAir = S.frictionAir; d.friction = S.friction; d.restitution = S.restitution; });
+  buildWalls();
+  rebuildDominoes(true);
+}
+
+function loadDataset() {
+  try {
+    const raw = localStorage.getItem(DOMINO_DATA_KEY);
+    const data = raw ? JSON.parse(raw) : { version: 1, linkCount: FIXED_LINKS.length, samples: [] };
+    if (!Array.isArray(data.samples)) data.samples = [];
+    return data;
+  } catch (err) {
+    return { version: 1, linkCount: FIXED_LINKS.length, samples: [] };
+  }
+}
+
+function saveDataset(data) {
+  localStorage.setItem(DOMINO_DATA_KEY, JSON.stringify(data));
+}
+
+let mixDataset = loadDataset();
+
+function buildExportPayload() {
+  return {
+    exportType: 'domino-fixed-link-mix-data',
+    version: 1,
+    savedAt: new Date().toISOString(),
+    linkCount: FIXED_LINKS.length,
+    originalLinks: FIXED_LINKS.map(l => ({ a: l.a, b: l.b, originalLength: +l.originalLength.toFixed(3), type: l.type })),
+    samples: mixDataset.samples,
+  };
+}
+
+function refreshExportBox() {
+  const payload = buildExportPayload();
+  document.getElementById('exportBox').value = JSON.stringify(payload, null, 2);
+  document.getElementById('statSamples').textContent = String(mixDataset.samples.length);
+  document.getElementById('datasetMeta').textContent = mixDataset.samples.length
+    ? `${mixDataset.samples.length} saved sample${mixDataset.samples.length === 1 ? '' : 's'} - append-only until you clear it`
+    : 'No saved samples yet.';
+}
+
+function getMixMeter(metrics) {
+  const score = Math.max(0, Math.min(100, (
+    25 * Math.max(0, Math.min(1, (metrics.over090 - 22) / (89 - 22))) +
+    25 * Math.max(0, Math.min(1, (metrics.over100 - 10) / (80 - 10))) +
+    25 * Math.max(0, Math.min(1, (metrics.over150 - 0) / (61 - 0))) +
+    25 * Math.max(0, Math.min(1, (metrics.over200 - 0) / (41 - 0)))
+  )));
+  let level = 'Unmixed';
+  let cls = 'low';
+
+  if (score >= 87 && metrics.medianStretch >= 1.35 && metrics.over100 >= 70) {
+    level = 'Very mixed';
+    cls = 'good';
+  } else if (score >= 55 && metrics.medianStretch >= 1.05 && metrics.over100 >= 40) {
+    level = 'Mixed';
+    cls = 'vmid';
+  } else if (score >= 25 && metrics.over090 >= 35 && metrics.over100 >= 20) {
+    level = 'Slightly mixed';
+    cls = 'mid';
+  }
+  return { score, level, cls };
+}
+
+function renderMixMeter(metrics) {
+  const meter = getMixMeter(metrics);
+  const badge = document.getElementById('mixBadge');
+  badge.textContent = `Mix meter - ${meter.level} (${meter.score.toFixed(0)}%)`;
+  badge.className = meter.cls;
+  document.getElementById('mixLevel').textContent = `${meter.level} (${meter.score.toFixed(0)}%)`;
+  document.getElementById('mixFill').style.width = `${meter.score.toFixed(1)}%`;
+  document.getElementById('mixMedian').textContent = `${metrics.medianStretch.toFixed(2)}x`;
+  document.getElementById('mixOver09').textContent = `${metrics.over090} / ${metrics.linkCount}`;
+  document.getElementById('mixOver10').textContent = `${metrics.over100} / ${metrics.linkCount}`;
+  document.getElementById('mixOver15').textContent = `${metrics.over150} / ${metrics.linkCount}`;
+  document.getElementById('mixOver20').textContent = `${metrics.over200} / ${metrics.linkCount}`;
+}
+
+function updateLiveStats() {
+  const m = getLiveLinkMetrics();
+  document.getElementById('statLinks').textContent = String(m.linkCount);
+  document.getElementById('statMeanStretch').textContent = `${m.meanStretch.toFixed(2)}x`;
+  document.getElementById('statMedianStretch').textContent = `${m.medianStretch.toFixed(2)}x`;
+  document.getElementById('statMinMax').textContent = `${m.minStretch.toFixed(2)}x / ${m.maxStretch.toFixed(2)}x`;
+  renderMixMeter(m);
+  return m;
+}
+
+function saveMixSample() {
+  const m = getLiveLinkMetrics();
+  const idx = mixDataset.samples.length + 1;
+  const sample = {
+    name: `Mix ${idx}`,
+    savedAt: new Date().toISOString(),
+    metrics: {
+      linkCount: m.linkCount,
+      meanLength: +m.meanLength.toFixed(3),
+      medianLength: +m.medianLength.toFixed(3),
+      meanStretch: +m.meanStretch.toFixed(4),
+      medianStretch: +m.medianStretch.toFixed(4),
+      q1Stretch: +m.q1Stretch.toFixed(4),
+      q3Stretch: +m.q3Stretch.toFixed(4),
+      minStretch: +m.minStretch.toFixed(4),
+      maxStretch: +m.maxStretch.toFixed(4),
+      over080: m.over080,
+      over090: m.over090,
+      over100: m.over100,
+      over125: m.over125,
+      over150: m.over150,
+      over175: m.over175,
+      over200: m.over200,
+      over250: m.over250,
+      currentLengths: m.currentLengths.map(v => +v.toFixed(3)),
+      stretchRatios: m.stretchRatios.map(v => +v.toFixed(4)),
+    },
+    settings: settingsSnapshot(),
+    dominoes: dominoPositionsSnapshot(),
+  };
+  mixDataset.samples.push(sample);
+  saveDataset(mixDataset);
+  refreshExportBox();
+  openExporter();
+  const badge = document.getElementById('mixBadge');
+  badge.textContent = `${sample.name} saved - mean stretch ${sample.metrics.meanStretch.toFixed(2)}x`;
+  badge.className = 'mid';
+}
+
+const exporter = document.getElementById('exporter');
+const exportBoxEl = document.getElementById('exportBox');
+
+function openExporter() { refreshExportBox(); exporter.classList.add('show'); }
+function closeExporter() { exporter.classList.remove('show'); }
+
+async function copyExportToClipboard() {
+  refreshExportBox();
+  exportBoxEl.focus();
+  exportBoxEl.select();
+  exportBoxEl.setSelectionRange(0, exportBoxEl.value.length);
+  let copied = false;
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(exportBoxEl.value);
+      copied = true;
+    }
+  } catch (err) {}
+  if (!copied) {
+    try { copied = document.execCommand('copy'); } catch (err) {}
+  }
+  const badge = document.getElementById('mixBadge');
+  badge.textContent = copied ? 'Export copied to clipboard' : 'Copy failed - text selected for manual copy';
+  badge.className = copied ? 'good' : 'mid';
+}
+
+function clearSavedSamples() {
+  mixDataset = { version: 1, linkCount: FIXED_LINKS.length, samples: [] };
+  saveDataset(mixDataset);
+  refreshExportBox();
+  const badge = document.getElementById('mixBadge');
+  badge.textContent = 'Saved mix samples cleared';
+  badge.className = 'low';
+}
+
+document.getElementById('saveMixBtn').addEventListener('click', saveMixSample);
+document.getElementById('exportBtn').addEventListener('click', openExporter);
+document.getElementById('closeExportBtn').addEventListener('click', closeExporter);
+document.getElementById('refreshExportBtn').addEventListener('click', refreshExportBox);
+document.getElementById('copyExportBtn').addEventListener('click', copyExportToClipboard);
+document.getElementById('clearExportBtn').addEventListener('click', clearSavedSamples);
+refreshExportBox();
+
+function rebuildDominoes(keepPositions = true) {
+  recomputeTileMetrics();
+  const slots = gridSlots();
+  const states = keepPositions
+    ? dominoes.map((d, i) => ({ x: d.position.x, y: d.position.y, angle: d.angle, vx: d.velocity.x, vy: d.velocity.y, av: d.angularVelocity, color: d.renderColor, col: d.gridColumn, row: d.gridRow, slot: slots[i] }))
+    : null;
+  dominoes.forEach(d => World.remove(world, d));
+  dominoes.length = 0;
+  for (let i = 0; i < 36; i++) {
+    const slot = slots[i];
+    const s = states ? states[i] : null;
+    const body = Bodies.rectangle(s ? s.x : slot.x, s ? s.y : slot.y, DW, DH, { frictionAir: S.frictionAir, friction: S.friction, restitution: S.restitution, density: 0.005, angle: s ? s.angle : 0 });
+    body.renderColor = s ? s.color : slot.color;
+    body.gridColumn = s ? s.col : slot.col;
+    body.gridRow = s ? s.row : slot.row;
+    dominoes.push(body);
+    World.add(world, body);
+    if (s) { Body.setVelocity(body, { x: s.vx, y: s.vy }); Body.setAngularVelocity(body, s.av); }
+  }
+}
+
+const REST = () => [ { x: 58, y: H * 0.50 }, { x: W - 58, y: H * 0.50 } ];
+const pointers = [0, 1].map(i => { const r = REST()[i]; return { x: r.x, y: r.y, px: r.x, py: r.y, vx: 0, vy: 0, active: false, id: -1 }; });
+const LERP_BASE = 0.22;
+const LERP_CLOSE = 0.90;
+const visualHands = [0, 1].map(i => { const r = REST()[i]; return { x: r.x, y: r.y, px: r.x, py: r.y, vx: 0, vy: 0, active: false }; });
+
+function updateVisualHands() {
+  const rest = REST();
+  const autoLocked = wxAnim.active || gather.phase !== 'idle';
+  for (let i = 0; i < 2; i++) {
+    let tx, ty, isActive;
+    let source = 'rest';
+    if (wxAnim.active && wxHands[i] && wxHands[i].active) { tx = wxHands[i].x; ty = wxHands[i].y; isActive = true; source = 'wax'; }
+    else if (gatherHands[i] && gatherHands[i].active) { tx = gatherHands[i].x; ty = gatherHands[i].y; isActive = true; source = 'gather'; }
+    else if (!autoLocked && pointers[i].active) { tx = pointers[i].x; ty = pointers[i].y; isActive = true; source = 'pointer'; }
+    else { tx = rest[i].x; ty = rest[i].y; isActive = false; source = 'rest'; }
+    const vh = visualHands[i];
+    vh.px = vh.x; vh.py = vh.y;
+    const dist_ = Math.hypot(tx - vh.x, ty - vh.y);
+    const lerpT = dist_ < 6 ? LERP_CLOSE : dist_ < 50 ? LERP_BASE + (LERP_CLOSE - LERP_BASE) * (1 - dist_/50) : LERP_BASE;
+    vh.x += (tx - vh.x) * lerpT;
+    vh.y += (ty - vh.y) * lerpT;
+    vh.vx = vh.x - vh.px;
+    vh.vy = vh.y - vh.py;
+    vh.active = isActive;
+    vh.source = source;
+  }
+}
+
+canvas.addEventListener('mouseleave', () => { pointers[0].active = false; pointers[1].active = false; setTimeout(() => { if (pointers.every(p => !p.active)) triggerGather(); }, 200); });
+canvas.addEventListener('mousemove', e => { const r = canvas.getBoundingClientRect(); const mx = e.clientX - r.left; const my = e.clientY - r.top; pointers[0].x = mx; pointers[0].y = my; pointers[0].active = true; pointers[1].x = W - mx; pointers[1].y = H - my; pointers[1].active = true; });
+canvas.addEventListener('touchstart', e => { e.preventDefault(); const r = canvas.getBoundingClientRect(); for (const t of e.changedTouches) { const slot = pointers.find(p => !p.active); if (!slot) break; slot.id = t.identifier; slot.x = slot.px = t.clientX - r.left; slot.y = slot.py = t.clientY - r.top; slot.vx = slot.vy = 0; slot.active = true; } }, { passive:false });
+canvas.addEventListener('touchmove', e => { e.preventDefault(); const r = canvas.getBoundingClientRect(); for (const t of e.changedTouches) { const slot = pointers.find(p => p.id === t.identifier); if (slot) { slot.x = t.clientX - r.left; slot.y = t.clientY - r.top; } } }, { passive:false });
+canvas.addEventListener('touchend', e => { e.preventDefault(); for (const t of e.changedTouches) { const slot = pointers.find(p => p.id === t.identifier); if (slot) { slot.active = false; slot.id = -1; } } if (pointers.every(p => !p.active)) setTimeout(triggerGather, 200); }, { passive:false });
+canvas.addEventListener('wheel', e => { e.preventDefault(); const mn = parseFloat(document.getElementById('min-ir').value) || 20; const mxR = parseFloat(document.getElementById('max-ir').value) || 300; S.inflRadius = Math.max(mn, Math.min(mxR, S.inflRadius - e.deltaY * 0.25)); document.getElementById('sl-ir').value = S.inflRadius; document.getElementById('val-ir').textContent = Math.round(S.inflRadius); }, { passive:false });
+
+let felt = null;
+function buildFelt() {
+  const off = document.createElement('canvas'); off.width = W; off.height = H; const c = off.getContext('2d');
+  c.fillStyle = '#27834a'; c.fillRect(0, 0, W, H);
+  const gl = c.createRadialGradient(W/2, H/2, 0, W/2, H/2, Math.max(W, H) * 0.6);
+  gl.addColorStop(0, 'rgba(55,170,85,0.18)'); gl.addColorStop(0.5, 'rgba(40,150,70,0.06)'); gl.addColorStop(1, 'rgba(0,0,0,0)'); c.fillStyle = gl; c.fillRect(0, 0, W, H);
+  c.strokeStyle = 'rgba(0,0,0,0.05)'; c.lineWidth = 1;
+  for (let i = -H; i < W + H; i += 6) { c.beginPath(); c.moveTo(i, 0); c.lineTo(i + H, H); c.stroke(); }
+  c.strokeStyle = 'rgba(255,255,255,0.022)';
+  for (let i = -H; i < W + H; i += 6) { c.beginPath(); c.moveTo(i + 1, 0); c.lineTo(i + H + 1, H); c.stroke(); }
+  const vig = c.createRadialGradient(W/2, H/2, H * 0.15, W/2, H/2, H * 0.88);
+  vig.addColorStop(0, 'rgba(0,0,0,0)'); vig.addColorStop(0.6, 'rgba(0,0,0,0.1)'); vig.addColorStop(1, 'rgba(0,0,0,0.55)'); c.fillStyle = vig; c.fillRect(0, 0, W, H);
+  c.strokeStyle = 'rgba(255,255,255,0.15)'; c.lineWidth = 2; c.strokeRect(1, 1, W - 2, H - 2);
+  const bz = 110; c.strokeStyle = 'rgba(255,255,255,0.06)'; c.lineWidth = 1; c.setLineDash([4, 6]); c.strokeRect(bz, bz, W - bz * 2, H - bz * 2); c.setLineDash([]);
+  return off;
+}
+felt = buildFelt();
+
+function rr(c, x, y, w, h, r) { c.beginPath(); c.moveTo(x + r, y); c.lineTo(x + w - r, y); c.arcTo(x + w, y, x + w, y + r, r); c.lineTo(x + w, y + h - r); c.arcTo(x + w, y + h, x + w - r, y + h, r); c.lineTo(x + r, y + h); c.arcTo(x, y + h, x, y + h - r, r); c.lineTo(x, y + r); c.arcTo(x, y, x + r, y, r); c.closePath(); }
+function hexToRgba(hex, a) { const n = parseInt(hex.replace('#', ''), 16); return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${Math.max(0,Math.min(1,a)).toFixed(3)})`; }
+
+function drawDomino(body) {
+  const { x, y } = body.position; const hw = DW / 2, hh = DH / 2, r = 5; const base = S.showColors ? (body.renderColor || '#ffffff') : '#f4efe7';
+  ctx.save(); ctx.translate(x, y); ctx.rotate(body.angle);
+  rr(ctx, -hw, -hh, DW, DH, r); const g = ctx.createLinearGradient(0, -hh, 0, hh); g.addColorStop(0, hexToRgba(base, 1.0)); g.addColorStop(0.45, hexToRgba(base, 0.92)); g.addColorStop(1, hexToRgba(base, 0.78)); ctx.fillStyle = g; ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.70)'; ctx.lineWidth = 0.9; ctx.stroke();
+  const ins = 3; rr(ctx, -hw + ins, -hh + ins, DW - ins*2, DH - ins*2, r - 1); ctx.strokeStyle = 'rgba(255,255,255,0.28)'; ctx.lineWidth = 0.6; ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-hw + 7, 0); ctx.lineTo(hw - 7, 0); ctx.strokeStyle = 'rgba(255,255,255,0.72)'; ctx.lineWidth = 1.1; ctx.stroke();
+  ctx.beginPath(); ctx.arc(0, 0, 1.6, 0, Math.PI*2); ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.fill();
+  rr(ctx, -hw + 2, -hh + 2, DW - 4, (DH - 4) * 0.38, r - 1); const hi = ctx.createLinearGradient(0, -hh, 0, 0); hi.addColorStop(0, 'rgba(255,255,255,0.42)'); hi.addColorStop(1, 'rgba(255,255,255,0)'); ctx.fillStyle = hi; ctx.fill();
+  ctx.restore();
+}
+
+const HAND_DASH = [[7,5], [3,5]];
+const ARM_ANCHORS = [{ xf: 0.22, yf: 1.08, side: -1 }, { xf: 0.78, yf: 1.08, side: 1 }];
+function getElbow(shoulder, wrist, bendDir = 1) { const dx = wrist.x - shoulder.x; const dy = wrist.y - shoulder.y; const dist = Math.max(1, Math.hypot(dx, dy)); const mid = { x: (shoulder.x + wrist.x) / 2, y: (shoulder.y + wrist.y) / 2 }; const nx = -dy / dist; const ny = dx / dist; const elbowLift = Math.min(140, Math.max(18, dist * 0.22)); return { x: mid.x + nx * elbowLift * bendDir, y: mid.y + ny * elbowLift * bendDir }; }
+function fixedPalmAngle(index) { const side = (index % 2 === 0) ? -1 : 1; const inward = (S.inwardTiltDeg || 15) * Math.PI / 180; return -Math.PI / 2 - side * inward; }
+function mixednessScore() { return 0; }
+function mixLabel(score) { if (score >= S.mixedEnoughThreshold) return { cls: 'good', text: `Mix: ${Math.round(score)}% - mixed enough` }; if (score >= Math.max(45, S.mixedEnoughThreshold - 15)) return { cls: 'mid', text: `Mix: ${Math.round(score)}% - getting mixed` }; return { cls: 'low', text: `Mix: ${Math.round(score)}% - not mixed` }; }
+function updateMixBadge() {}
+
+// --- v2: 3-pass flat hand rendering (shadow, border, fill) ---
+const SKIN_FILL = '#d4a574';
+const SKIN_BORDER = 'rgba(120,75,35,0.6)';
+const SKIN_SHADOW = 'rgba(0,0,0,0.22)';
+const BORDER_INFLATE = 3;
+const SHADOW_INFLATE = 7;
+const SHADOW_OFFSET = 5;
+
+function taperedSegment(c, from, to, wStart, wEnd) {
+  const dx = to.x - from.x, dy = to.y - from.y;
+  const len = Math.max(1, Math.hypot(dx, dy));
+  const nx = -dy / len, ny = dx / len;
+  c.beginPath();
+  c.moveTo(from.x + nx * wStart / 2, from.y + ny * wStart / 2);
+  c.lineTo(to.x + nx * wEnd / 2, to.y + ny * wEnd / 2);
+  c.lineTo(to.x - nx * wEnd / 2, to.y - ny * wEnd / 2);
+  c.lineTo(from.x - nx * wStart / 2, from.y - ny * wStart / 2);
+  c.closePath();
+  c.fill();
+}
+
+function drawHandParts(c, p, index, inflate) {
+  const anchor = ARM_ANCHORS[index % ARM_ANCHORS.length];
+  const shoulder = { x: W * anchor.xf, y: H * anchor.yf };
+  const wrist = { x: p.x, y: p.y };
+  const elbow = getElbow(shoulder, wrist, anchor.side);
+  const handSc = 1.0 * (S.handScale || 1);
+  const inf = inflate;
+
+  // Upper arm: wide at shoulder, narrows to elbow
+  const shoulderW = (22 * (S.upperArmScale || 1)) + inf;
+  const elbowW = (14 * (S.upperArmScale || 1)) + inf;
+  taperedSegment(c, shoulder, elbow, shoulderW, elbowW);
+
+  // Joint circle at shoulder
+  c.beginPath(); c.arc(shoulder.x, shoulder.y, shoulderW / 2, 0, Math.PI * 2); c.fill();
+
+  // Joint circle at elbow
+  const elbowJointR = (elbowW / 2);
+  c.beginPath(); c.arc(elbow.x, elbow.y, elbowJointR, 0, Math.PI * 2); c.fill();
+
+  // Forearm: starts at elbow width, narrows to wrist
+  const foreElbowW = (14 * (S.forearmScale || 1)) + inf;
+  const wristW = (9 * (S.forearmScale || 1)) + inf;
+  taperedSegment(c, elbow, wrist, foreElbowW, wristW);
+
+  // Hand parts drawn in local wrist space
+  const dx = wrist.x - shoulder.x, dy = wrist.y - shoulder.y;
+  const dir = Math.atan2(dy, dx);
+  c.save();
+  c.translate(wrist.x, wrist.y);
+  c.rotate(dir + Math.PI / 2);
+  c.scale(handSc, handSc);
+
+  const hi = inf / handSc;
+
+  // Fingers first (drawn behind palm)
+  const fingers = [
+    { x: -8.5, len: 20, w: 4.5 },
+    { x: -2.8, len: 22, w: 4.8 },
+    { x:  2.8, len: 22, w: 4.8 },
+    { x:  8.5, len: 19, w: 4.2 }
+  ];
+  fingers.forEach(f => {
+    const fw = f.w + hi;
+    c.beginPath();
+    c.roundRect(f.x - fw / 2, -8 - f.len, fw, f.len + 6, fw / 2);
+    c.fill();
+  });
+
+  // Thumb (behind palm)
+  const ts = (index % 2 === 0) ? 1 : -1;
+  c.beginPath();
+  c.ellipse(ts * 12, -3, 5 + hi / 2, 8.5 + hi / 2, ts * 0.38, 0, Math.PI * 2);
+  c.fill();
+
+  // Palm on top
+  rr(c, -13 - hi / 2, -15 - hi / 2, 26 + hi, 28 + hi, 11);
+  c.fill();
+
+  c.restore();
+}
+
+function drawRelaxedHandRig(p, index, palmColor) {
+  ctx.save();
+
+  // Pass 1: Table shadow (offset, largest inflate, soft dark)
+  ctx.fillStyle = SKIN_SHADOW;
+  ctx.save();
+  ctx.translate(SHADOW_OFFSET, SHADOW_OFFSET);
+  drawHandParts(ctx, p, index, SHADOW_INFLATE);
+  ctx.restore();
+
+  // Pass 2: Border (slightly inflated, dark edge color)
+  ctx.fillStyle = SKIN_BORDER;
+  drawHandParts(ctx, p, index, BORDER_INFLATE);
+
+  // Pass 3: Fill (normal size, flat solid color)
+  ctx.fillStyle = SKIN_FILL;
+  drawHandParts(ctx, p, index, 0);
+
+  ctx.restore();
+}
+
+function drawSingleHand(p, index, palmColor = S.handColor) {
+  if (!p.active) return;
+  drawRelaxedHandRig(p, index, palmColor);
+}
+
+function drawHand() {
+  const autoRunning = wxAnim.active || gather.phase !== 'idle';
+  for (let i = 0; i < 2; i++) {
+    const vh = visualHands[i];
+    drawRelaxedHandRig(vh, i, S.handColor);
+  }
+}
+function applyGrabFromPointer(p) { const R = S.inflRadius; const R2 = R * R; const gs = S.grabStrength; const fp = S.grabFalloff; const speed = Math.hypot(p.vx, p.vy); if (speed < 0.1) return; const ux = p.vx / speed; const uy = p.vy / speed; dominoes.forEach(d => { const dx = d.position.x - p.x; const dy = d.position.y - p.y; const dist2 = dx*dx + dy*dy; if (dist2 >= R2) return; if (dx * ux + dy * uy > 0) return; const t = 1 - Math.sqrt(dist2) / R; Body.applyForce(d, d.position, { x: p.vx * Math.pow(t, fp) * gs, y: p.vy * Math.pow(t, fp) * gs }); }); }
+function applyGrab() { visualHands.forEach(vh => { if (!vh.active) return; if (vh.source === 'gather') return; applyGrabFromPointer(vh); }); }
+function clampBounds() { const margin = Math.max(TILE_R, S.edgeZone - TILE_R); dominoes.forEach(d => { let { x, y } = d.position; let { x:vx, y:vy } = d.velocity; let moved = false; if (x < margin) { x = margin; vx = Math.abs(vx) * S.edgeForce; moved = true; } if (x > W-margin) { x = W-margin; vx = -Math.abs(vx) * S.edgeForce; moved = true; } if (y < margin) { y = margin; vy = Math.abs(vy) * S.edgeForce; moved = true; } if (y > H-margin) { y = H-margin; vy = -Math.abs(vy) * S.edgeForce; moved = true; } if (moved) { Body.setPosition(d, { x, y }); Body.setVelocity(d, { x:vx, y:vy }); } }); }
+
+const gather = { active:false, phase:'idle', progress:0, holdTimer:0 };
+const G_HOLD = 28, G_OUT = 85;
+const gatherHands = [{ x:0, y:0, vx:0, vy:0, active:false }, { x:0, y:0, vx:0, vy:0, active:false }];
+function easeOut(t) { return 1 - Math.pow(1 - t, 3); }
+function easeIn(t) { return Math.pow(t, 2.5); }
+const GATHER_START_R = () => Math.hypot(W, H) * 0.72;
+function gatherR() { const startR = GATHER_START_R(); const endR = S.gatherEndR; const t = gather.phase === 'out' ? easeIn(gather.progress) : easeOut(gather.progress); return startR - t * (startR - endR); }
+function triggerGather() { gather.active = true; gather.phase = 'in'; gather.progress = 0; gather.holdTimer = 0; gatherHands.forEach(h => { h.active = true; h.vx = 0; h.vy = 0; }); }
+function updateGather() { if (!gather.active) return; const G_IN = Math.round(S.gatherSpeed * 60); if (gather.phase === 'in') { gather.progress += 1 / G_IN; if (gather.progress >= 1) { gather.progress = 1; gather.phase = 'hold'; } } else if (gather.phase === 'hold') { if (++gather.holdTimer >= G_HOLD) { gather.phase = 'out'; gather.progress = 1; gather.holdTimer = 0; } } else if (gather.phase === 'out') { gather.progress -= 1 / G_OUT; if (gather.progress <= 0) { gather.progress = 0; gather.phase = 'idle'; gather.active = false; gatherHands.forEach(h => { h.active = false; h.vx = 0; h.vy = 0; }); } } }
+function applyGatherForce() { if (!gather.active || gather.phase === 'out') return; const R = gatherR(); const str = S.gatherForce * easeOut(gather.progress); const cx = W/2, cy = H/2; dominoes.forEach(d => { const dx = d.position.x - cx; const dy = d.position.y - cy; const dist = Math.hypot(dx, dy); if (dist <= R || dist < 1) return; const excess = dist - R; const nx = dx / dist, ny = dy / dist; Body.applyForce(d, d.position, { x: -nx * excess * str, y: -ny * excess * str }); }); }
+function updateGatherHands() { if (!gather.active) return; if (gather.phase === 'out') { gatherHands.forEach(h => { h.active = false; h.vx = 0; h.vy = 0; }); return; } const cx = W / 2, cy = H / 2; const R = gatherR(); const targets = [{ x: cx - R, y: cy }, { x: cx + R, y: cy }]; gatherHands.forEach((h, i) => { const tx = targets[i].x; const ty = targets[i].y; h.vx = tx - h.x; h.vy = ty - h.y; h.x = tx; h.y = ty; h.active = true; }); }
+function drawGatherArms() { if (!gather.active) return; if (S.ringOpacity <= 0) return; const R = gatherR(); const phaseAlpha = gather.phase === 'out' ? Math.max(0.18, gather.progress * 0.75) : Math.min(gather.progress * 4, 1) * 0.75; const finalAlpha = phaseAlpha * S.ringOpacity; ctx.save(); ctx.beginPath(); ctx.arc(W/2, H/2, R, 0, Math.PI * 2); ctx.strokeStyle = hexToRgba(S.ringColor, finalAlpha); ctx.lineWidth = 3; ctx.setLineDash([12, 10]); ctx.stroke(); ctx.setLineDash([]); ctx.restore(); }
+
+const wxAnim = { active:false, angle:0, frame:0, totalFrames:0 };
+const wxHands = [{ x:0, y:0, px:0, py:0, vx:0, vy:0, active:false }, { x:0, y:0, px:0, py:0, vx:0, vy:0, active:false }];
+function ovalParams() { return { lCX: W * 0.35, rCX: W * 0.65, cy: H * 0.50, rX: W * 0.38, rY: H * 0.36 }; }
+function shuffle() { if (wxAnim.active) { wxAnim.active = false; wxHands[0].active = false; wxHands[1].active = false; return; } const secsPerRot = Math.max(0.5, 1.4 - S.shuffleForce * 1.8); const rotations = 2 + Math.round(S.shuffleSpin * 2.5); wxAnim.active = true; wxAnim.angle = Math.PI; wxAnim.frame = 0; wxAnim.totalFrames = Math.round(secsPerRot * 60 * rotations); wxHands[0].active = true; wxHands[1].active = true; const o = ovalParams(); wxHands[0].x = wxHands[0].px = o.lCX + o.rX * Math.cos(Math.PI); wxHands[0].y = wxHands[0].py = o.cy + o.rY * Math.sin(Math.PI); wxHands[1].x = wxHands[1].px = o.rCX + o.rX * Math.cos(Math.PI); wxHands[1].y = wxHands[1].py = o.cy + o.rY * Math.sin(Math.PI); }
+function updateWaxAnim() { if (!wxAnim.active) return; wxAnim.frame++; const prog = wxAnim.frame / wxAnim.totalFrames; const speed = prog < 0.12 ? prog / 0.12 : prog > 0.85 ? (1 - prog) / 0.15 : 1.0; const secsPerRot = Math.max(0.5, 1.4 - S.shuffleForce * 1.8); const dAngle = (2 * Math.PI / (secsPerRot * 60)) * speed; wxAnim.angle += dAngle; const θ = wxAnim.angle; const o = ovalParams(); const lPx = wxHands[0].x, lPy = wxHands[0].y; const rPx = wxHands[1].x, rPy = wxHands[1].y; wxHands[0].x = o.lCX + o.rX * Math.cos(θ); wxHands[0].y = o.cy + o.rY * Math.sin(θ); wxHands[1].x = o.rCX + o.rX * Math.cos(-θ); wxHands[1].y = o.cy + o.rY * Math.sin(-θ); wxHands[0].vx = wxHands[0].x - lPx; wxHands[0].vy = wxHands[0].y - lPy; wxHands[1].vx = wxHands[1].x - rPx; wxHands[1].vy = wxHands[1].y - rPy; if (wxAnim.frame >= wxAnim.totalFrames) { wxAnim.active = false; wxHands[0].active = false; wxHands[1].active = false; setTimeout(() => { if (!wxAnim.active && pointers.every(p => !p.active)) triggerGather(); }, 180); } }
+
+document.getElementById('shuffleBtn').addEventListener('click', shuffle);
+document.getElementById('gatherBtn').addEventListener('click', triggerGather);
+const colorBtn = document.getElementById('colorBtn');
+function syncColorBtn() { colorBtn.textContent = S.showColors ? '🌈  Color: On' : '🌈  Color: Off'; }
+colorBtn.addEventListener('click', () => { S.showColors = !S.showColors; syncColorBtn(); });
+syncColorBtn();
+const hudToggleBtn = document.getElementById('hudToggleBtn');
+function syncHudToggleBtn() { const hidden = document.body.classList.contains('hud-hidden'); hudToggleBtn.textContent = hidden ? '👁  Show HUD' : '👁  Hide HUD'; }
+hudToggleBtn.addEventListener('click', () => { document.body.classList.toggle('hud-hidden'); syncHudToggleBtn(); });
+syncHudToggleBtn();
+
+document.getElementById('exportSettingsBtn').addEventListener('click', async () => { const snap = settingsSnapshot(); const json = JSON.stringify(snap, null, 2); const btn = document.getElementById('exportSettingsBtn'); const old = btn.textContent; try { await navigator.clipboard.writeText(json); btn.textContent = '📤  Copied!'; } catch (e) { const blob = new Blob([json], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'domino-physics-settings.json'; a.click(); URL.revokeObjectURL(url); btn.textContent = '📤  Downloaded'; } setTimeout(() => { btn.textContent = old; }, 1200); });
+document.getElementById('saveSettingsBtn').addEventListener('click', () => { saveCurrentSettings(); const btn = document.getElementById('saveSettingsBtn'); const old = btn.textContent; btn.textContent = '🖫  Saved'; setTimeout(() => { btn.textContent = old; }, 900); });
+const panel = document.getElementById('panel');
+const overlay = document.getElementById('overlay');
+const openPanel = () => { panel.classList.add('open'); overlay.classList.add('show'); };
+const closePanel = () => { panel.classList.remove('open'); overlay.classList.remove('show'); };
+document.getElementById('hideAllBtn').addEventListener('click', () => { document.body.classList.add('clean-view'); });
+document.getElementById('restoreBtn').addEventListener('click', () => { document.body.classList.remove('clean-view'); });
+document.getElementById('settingsBtn').addEventListener('click', openPanel);
+document.getElementById('closeBtn').addEventListener('click', closePanel);
+overlay.addEventListener('click', closePanel);
+document.getElementById('hand-color').addEventListener('input', e => { S.handColor = e.target.value; });
+function wire(slId, valId, minId, maxId, key, dec) { const sl = document.getElementById(slId); const vl = document.getElementById(valId); const mn = document.getElementById(minId); const mx = document.getElementById(maxId); function commit() { const v = parseFloat(sl.value); S[key] = v; vl.textContent = dec === 0 ? Math.round(v) : v.toFixed(dec); if (key === 'frictionAir' || key === 'friction' || key === 'restitution') { dominoes.forEach(d => { d[key] = v; }); } if (key === 'posIter') engine.positionIterations = Math.round(v); if (key === 'velIter') engine.velocityIterations = Math.round(v); } sl.addEventListener('input', commit); function clamp(el, attr) { const v = parseFloat(el.value); sl[attr] = v; if (attr === 'min' && parseFloat(sl.value) < v) { sl.value = v; commit(); } if (attr === 'max' && parseFloat(sl.value) > v) { sl.value = v; commit(); } } mn.addEventListener('change', () => clamp(mn, 'min')); mx.addEventListener('change', () => clamp(mx, 'max')); mn.addEventListener('keydown', e => { if (e.key === 'Enter') clamp(mn, 'min'); }); mx.addEventListener('keydown', e => { if (e.key === 'Enter') clamp(mx, 'max'); }); }
+wire('sl-ir', 'val-ir', 'min-ir', 'max-ir', 'inflRadius', 0); wire('sl-gs', 'val-gs', 'min-gs', 'max-gs', 'grabStrength', 3); wire('sl-ez', 'val-ez', 'min-ez', 'max-ez', 'edgeZone', 0); wire('sl-ef', 'val-ef', 'min-ef', 'max-ef', 'edgeForce', 2); document.getElementById('sl-ez').addEventListener('input', buildWalls); document.getElementById('sl-ef').addEventListener('input', () => { wallBodies.forEach(w => { w.restitution = S.edgeForce; }); }); wire('sl-fp', 'val-fp', 'min-fp', 'max-fp', 'grabFalloff', 1); wire('sl-op', 'val-op', 'min-op', 'max-op', 'handOpacity', 2); wire('sl-of', 'val-of', 'min-of', 'max-of', 'overlayFeather', 1); wire('sl-air', 'val-air', 'min-air', 'max-air', 'frictionAir', 3); wire('sl-fric', 'val-fric', 'min-fric', 'max-fric', 'friction', 2); wire('sl-bounce', 'val-bounce', 'min-bounce', 'max-bounce', 'restitution', 2); wire('sl-pos', 'val-pos', 'min-pos', 'max-pos', 'posIter', 0); wire('sl-vel', 'val-vel', 'min-vel', 'max-vel', 'velIter', 0); wire('sl-shuf', 'val-shuf', 'min-shuf', 'max-shuf', 'shuffleForce', 2); wire('sl-spin', 'val-spin', 'min-spin', 'max-spin', 'shuffleSpin', 2);
+document.getElementById('sl-ds').addEventListener('input', () => { S.domScale = parseFloat(document.getElementById('sl-ds').value); document.getElementById('val-ds').textContent = S.domScale.toFixed(2); rebuildDominoes(true); });
+document.getElementById('min-ds').addEventListener('change', () => { document.getElementById('sl-ds').min = document.getElementById('min-ds').value; });
+document.getElementById('max-ds').addEventListener('change', () => { document.getElementById('sl-ds').max = document.getElementById('max-ds').value; });
+wire('sl-gr', 'val-gr', 'min-gr', 'max-gr', 'gatherEndR', 0); wire('sl-gspd', 'val-gspd', 'min-gspd', 'max-gspd', 'gatherSpeed', 1); wire('sl-gf', 'val-gf', 'min-gf', 'max-gf', 'gatherForce', 2); wire('sl-gro', 'val-gro', 'min-gro', 'max-gro', 'ringOpacity', 2); document.getElementById('ring-color').addEventListener('input', (e) => { S.ringColor = e.target.value; }); wire('sl-hs', 'val-hs', 'min-hs', 'max-hs', 'handScale', 2); wire('sl-fas', 'val-fas', 'min-fas', 'max-fas', 'forearmScale', 2); wire('sl-uas', 'val-uas', 'min-uas', 'max-uas', 'upperArmScale', 2);
+window.addEventListener('resize', () => { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; felt = buildFelt(); buildWalls(); rebuildDominoes(false); });
+function loop() { pointers.forEach(p => { if (!p.active) { p.vx = 0; p.vy = 0; return; } p.vx = p.x - p.px; p.vy = p.y - p.py; p.px = p.x; p.py = p.y; }); updateWaxAnim(); updateGather(); updateGatherHands(); updateVisualHands(); applyGatherForce(); applyGrab(); Engine.update(engine, 1000/60); clampBounds(); ctx.drawImage(felt, 0, 0); dominoes.forEach(drawDomino); drawGatherArms(); drawHand(); updateLiveStats(); requestAnimationFrame(loop); }
+const __savedSettings = loadSavedSettings();
+if (__savedSettings) applySavedSettingsToUI(__savedSettings);
+requestAnimationFrame(loop);
+</script>
+
+</body>
+</html>
