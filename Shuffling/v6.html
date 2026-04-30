@@ -1081,18 +1081,14 @@ function drawHandParts(c, p, index, inflate) {
 function drawRelaxedHandRig(p, index, palmColor) {
   ctx.save();
 
-  // Pass 1: Table shadow
+  // Shadow
   ctx.fillStyle = SKIN_SHADOW;
   ctx.save();
   ctx.translate(SHADOW_OFFSET, SHADOW_OFFSET);
   drawHandParts(ctx, p, index, SHADOW_INFLATE);
   ctx.restore();
 
-  // Pass 2: Border
-  ctx.fillStyle = SKIN_BORDER;
-  drawHandParts(ctx, p, index, BORDER_INFLATE);
-
-  // Pass 3: Fill
+  // Fill
   ctx.fillStyle = SKIN_FILL;
   drawHandParts(ctx, p, index, 0);
 
