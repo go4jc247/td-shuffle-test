@@ -1095,7 +1095,7 @@ function getElbow(shoulder, wrist, bendDir) {
 }
 
 // Build a hand Path2D from perimeter points, clipped at wrist points with bezier curve
-function buildHandPath(points, wp1, wp2, wristCurve) {
+function buildHandPath(points, wp1, wp2, wristCurve, flipCurve) {
   // Walk from wp1 -> wp2 going through the hand (the shorter arc with fingers)
   // Then close with a bezier curve between wp2 and wp1
   const n = points.length;
@@ -1114,14 +1114,12 @@ function buildHandPath(points, wp1, wp2, wristCurve) {
   // Close with bezier curve from wp2 back to wp1
   const mx = (p1[0] + p2[0]) / 2;
   const my = (p1[1] + p2[1]) / 2;
-  // Control point pushes inward (toward fingers) based on wristCurve
   const dx = p2[0] - p1[0], dy = p2[1] - p1[1];
   const dist = Math.hypot(dx, dy);
   const nx = -dy / dist, ny = dx / dist;
-  // Determine which direction is "inward" (toward fingers = toward lower Y in SVG)
-  const avgFingerY = points[0][1]; // first point is near fingertips
   const inwardSign = (my + nx * 10 < my - nx * 10) ? 1 : -1;
-  const cpDist = dist * wristCurve * 0.5 * inwardSign;
+  const sign = flipCurve ? -inwardSign : inwardSign;
+  const cpDist = dist * wristCurve * 0.5 * sign;
   const cpx = mx + nx * cpDist;
   const cpy = my + ny * cpDist;
 
@@ -1143,12 +1141,12 @@ let cachedWristCenter = { left: null, right: null };
 
 function rebuildHandPaths() {
   const lp1 = HR.wp1, lp2 = HR.wp2;
-  cachedLeftHandPath = buildHandPath(LEFT_HAND_POINTS, lp1, lp2, HR.wristCurve);
+  cachedLeftHandPath = buildHandPath(LEFT_HAND_POINTS, lp1, lp2, HR.wristCurve, false);
 
   // Mirror to right hand
   const rp1 = mirrorWristIndex(lp1, LEFT_HAND_POINTS.length, RIGHT_HAND_POINTS.length);
   const rp2 = mirrorWristIndex(lp2, LEFT_HAND_POINTS.length, RIGHT_HAND_POINTS.length);
-  cachedRightHandPath = buildHandPath(RIGHT_HAND_POINTS, rp2, rp1, HR.wristCurve);
+  cachedRightHandPath = buildHandPath(RIGHT_HAND_POINTS, rp2, rp1, HR.wristCurve, true);
 
   // Cache wrist center (midpoint of wp1 and wp2) for positioning
   const lPt1 = LEFT_HAND_POINTS[lp1], lPt2 = LEFT_HAND_POINTS[lp2];
