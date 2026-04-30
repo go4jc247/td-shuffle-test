@@ -1148,7 +1148,7 @@ function rebuildHandPaths() {
   // Mirror to right hand
   const rp1 = mirrorWristIndex(lp1, LEFT_HAND_POINTS.length, RIGHT_HAND_POINTS.length);
   const rp2 = mirrorWristIndex(lp2, LEFT_HAND_POINTS.length, RIGHT_HAND_POINTS.length);
-  cachedRightHandPath = buildHandPath(RIGHT_HAND_POINTS, rp1, rp2, HR.wristCurve);
+  cachedRightHandPath = buildHandPath(RIGHT_HAND_POINTS, rp2, rp1, HR.wristCurve);
 
   // Cache wrist center (midpoint of wp1 and wp2) for positioning
   const lPt1 = LEFT_HAND_POINTS[lp1], lPt2 = LEFT_HAND_POINTS[lp2];
