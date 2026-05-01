@@ -17350,38 +17350,9 @@ function _drawShuffleHandsOverlay() {
   var W = cvs.width, H = cvs.height;
   c.clearRect(0, 0, W, H);
 
-  // Collect active pointer positions
-  var pointers = [];
-  var ptr = _shufflePhysicsPointer;
-  if (ptr && ptr.active) {
-    pointers.push({ x: ptr.x, y: ptr.y });
-  }
-  var tpKeys = Object.keys(_shuffleTouchPointers);
-  for (var i = 0; i < tpKeys.length; i++) {
-    var tp = _shuffleTouchPointers[tpKeys[i]];
-    if (tp) pointers.push({ x: tp.x, y: tp.y });
-  }
-
-  // If no active pointers but AI is shuffling, use the AI playback pointers
-  if (pointers.length === 0 && _sandboxPlaybackActive) {
-    // AI uses _shuffleTouchPointers with _pb keys
-    // Already captured above, so just draw at center as fallback
-    var ac = _shuffleAreaCenter;
-    pointers.push({ x: ac.x - 40, y: ac.y });
-    pointers.push({ x: ac.x + 40, y: ac.y });
-  }
-
-  // Draw up to 2 hands at pointer positions
-  for (var h = 0; h < Math.min(2, pointers.length); h++) {
-    shDrawHand(c, pointers[h].x, pointers[h].y, h, W, H);
-  }
-
-  // If only 1 pointer, draw second hand mirrored
-  if (pointers.length === 1) {
-    var mx = W - pointers[0].x;
-    var my = H - pointers[0].y;
-    shDrawHand(c, mx, my, 1, W, H);
-  }
+  // DEBUG: Always draw hands at fixed center positions during shuffle
+  shDrawHand(c, W * 0.35, H * 0.4, 0, W, H);
+  shDrawHand(c, W * 0.65, H * 0.4, 1, W, H);
 }
 
 // Clean up shuffle hand canvas when shuffle ends
