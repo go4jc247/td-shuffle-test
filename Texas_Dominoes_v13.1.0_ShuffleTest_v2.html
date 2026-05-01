@@ -17340,7 +17340,7 @@ var _lastShuffleHandPositions = null; // persist hand positions through pointer 
 
 // Render hands on a canvas overlay during shuffle physics
 function _drawShuffleHandsOverlay() {
-  if (!_shuffleHandsActive || !_shufflePhysicsActive || _shuffleGatherActive) {
+  if (!_shuffleHandsActive || !_shufflePhysicsActive) {
     // If hands should be gone, remove canvas if it exists
     var old = document.getElementById('shuffleHandCanvas');
     if (old) { old.remove(); _shuffleHandCanvas = null; }
