@@ -20931,7 +20931,7 @@ const SHUFFLE_RIGHT_HAND = new Path2D("M 1286 669 L 1286 661 L 1285 660 L 1282 6
 const SH_LEFT_WC = { x: 430.5, y: 707.0 };
 const SH_RIGHT_WC = { x: 1174.5, y: 746.5 };
 // Scale relative to viewport — sandbox was ~1200px wide, game is ~400px
-const SH_HAND_SCALE_BASE = 0.4;  // base scale at 1200px width
+const SH_HAND_SCALE_BASE = 0.26;  // base scale at 1200px width (reduced ~35%)
 const SH_FOREARM_W_BASE = 69;    // base forearm width at 1200px
 const SH_SHOULDER_DEPTH = 1.32;
 const SH_SKIN_FILL = '#d4a574';
@@ -21041,25 +21041,70 @@ function drawPersistentHands() {
   console.log('[SHUFFLE HANDS] Drew hands at', W * 0.35, H * 0.45, 'and', W * 0.65, H * 0.45);
 }
 
-// AUTO-DRAW: show hands 2 seconds after page load for debugging
-setTimeout(function() {
-  console.log('[SHUFFLE HANDS] Auto-drawing hands on load...');
-  drawPersistentHands();
-}, 2000);
-
 async function shuffleWithHands(rect, pileCx, pileCy, pileSprites, SS) {
   const cvs = ensureShuffleHandCanvas();
   const c = cvs.getContext('2d');
   const W = cvs.width, H = cvs.height;
 
-  // Draw hands persistently at center — they stay visible
-  drawPersistentHands();
+  // Recalculate pile center relative to gameWrapper
+  const gameWrapper = document.getElementById('gameWrapper');
+  const wrapperRect = gameWrapper.getBoundingClientRect();
+  const pcx = pileCx - wrapperRect.left;
+  const pcy = pileCy - wrapperRect.top;
 
-  // Wait 3 seconds so you can see them
-  await new Promise(r => setTimeout(r, 3000));
+  // Oval paths for two hands sweeping around the pile
+  const lCX = pcx - W * 0.08;
+  const rCX = pcx + W * 0.08;
+  const rX = W * 0.18;
+  const rY = H * 0.14;
 
-  // Don't remove canvas — leave it visible for debugging
-  console.log('[SHUFFLE HANDS] Shuffle phase done, hands still visible');
+  const shuffleDuration = 3000;
+  const totalFrames = Math.round(shuffleDuration / 16.67);
+  const rotationsPerShuffle = 2;
+  const totalAngle = rotationsPerShuffle * (SS.reshuffleCount || 3) * Math.PI * 2;
+  const reshuffleInterval = Math.floor(totalFrames / (SS.reshuffleCount || 3));
+
+  let frame = 0;
+  await new Promise(resolve => {
+    function tick() {
+      if (frame >= totalFrames) {
+        c.clearRect(0, 0, W, H);
+        cvs.remove();
+        _shuffleHandCanvas = null;
+        resolve();
+        return;
+      }
+
+      const prog = frame / totalFrames;
+      const angle = prog * totalAngle;
+
+      const lx = lCX + rX * Math.cos(angle);
+      const ly = pcy + rY * Math.sin(angle);
+      const rx = rCX + rX * Math.cos(-angle);
+      const ry = pcy + rY * Math.sin(-angle);
+
+      // Reshuffle sprite positions periodically
+      if (frame > 0 && frame % reshuffleInterval === 0) {
+        const spreadX = Math.min(SS.spreadXMax || 120, W * (SS.spreadXPct || 15) / 100);
+        const spreadY = Math.min(SS.spreadYMax || 80, H * (SS.spreadYPct || 10) / 100);
+        for (const sp of pileSprites) {
+          const nx = pileCx - 28 + (Math.random() * 2 - 1) * spreadX;
+          const ny = pileCy - 56 + (Math.random() * 2 - 1) * spreadY;
+          const nrz = Math.random() * 360;
+          sp.setPose({ x: nx, y: ny, s: SS.tileScale || 0.38, rz: nrz, ry: 0 });
+        }
+        SFX.playShuffle();
+      }
+
+      c.clearRect(0, 0, W, H);
+      shDrawHand(c, lx, ly, 0, W, H);
+      shDrawHand(c, rx, ry, 1, W, H);
+
+      frame++;
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  });
 }
 
 // Deal animation: create sprites at center, animate to hand positions
