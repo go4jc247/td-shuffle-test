@@ -21004,23 +21004,30 @@ function shDrawHand(c, wx, wy, index, W, H) {
 
 // Shuffle animation: hands sweep over the center pile in oval paths
 async function shuffleWithHands(rect, pileCx, pileCy, pileSprites, SS) {
-  // Create canvas overlay
-  const cvs = document.createElement('canvas');
-  cvs.width = rect.width;
-  cvs.height = rect.height;
-  cvs.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;z-index:900;pointer-events:none;';
+  // Create canvas overlay inside gameWrapper
   const gameWrapper = document.getElementById('gameWrapper') || document.body;
+  const W = Math.round(gameWrapper.offsetWidth);
+  const H = Math.round(gameWrapper.offsetHeight);
+  const cvs = document.createElement('canvas');
+  cvs.width = W;
+  cvs.height = H;
+  cvs.style.cssText = 'position:absolute;top:0;left:0;width:' + W + 'px;height:' + H + 'px;z-index:900;pointer-events:none;';
   gameWrapper.appendChild(cvs);
   const c = cvs.getContext('2d');
-  const W = rect.width, H = rect.height;
+
+  // Recalculate pile center relative to gameWrapper (not viewport)
+  const wrapperRect = gameWrapper.getBoundingClientRect();
+  const pcx = pileCx - wrapperRect.left;
+  const pcy = pileCy - wrapperRect.top;
 
   // Oval paths for two hands sweeping around the pile
-  const lCX = pileCx - W * 0.08;
-  const rCX = pileCx + W * 0.08;
+  const lCX = pcx - W * 0.08;
+  const rCX = pcx + W * 0.08;
   const rX = W * 0.18;  // oval width
   const rY = H * 0.14;  // oval height
 
-  const shuffleDuration = (SS.reshuffleSpeed || 200) * (SS.reshuffleCount || 3);
+  // Longer shuffle: 3 seconds total
+  const shuffleDuration = 3000;
   const totalFrames = Math.round(shuffleDuration / 16.67); // ~60fps
   const rotationsPerShuffle = 2;
   const totalAngle = rotationsPerShuffle * (SS.reshuffleCount || 3) * Math.PI * 2;
@@ -21043,10 +21050,10 @@ async function shuffleWithHands(rect, pileCx, pileCy, pileSprites, SS) {
 
       // Left hand position
       const lx = lCX + rX * Math.cos(angle);
-      const ly = pileCy + rY * Math.sin(angle);
+      const ly = pcy + rY * Math.sin(angle);
       // Right hand position (opposite direction)
       const rx = rCX + rX * Math.cos(-angle);
-      const ry = pileCy + rY * Math.sin(-angle);
+      const ry = pcy + rY * Math.sin(-angle);
 
       // Reshuffle sprite positions periodically
       if (frame > 0 && frame % reshuffleInterval === 0) {
