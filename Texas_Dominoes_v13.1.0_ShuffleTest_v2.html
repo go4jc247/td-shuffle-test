@@ -18373,8 +18373,7 @@ function _endShuffleForPick() {
   _sandboxPlaybackActive = false; // stop any recording playback
   _shufflePhysicsPointer.active = false;
 
-  // Remove shuffle hands overlay
-  _cleanupShuffleHands();
+  // Don't cleanup hands here — let _runPickPhase do the gather animation with hands
 
   // Remove shuffle UI only
   var btnBar = document.getElementById('shuffleBtnBar');
@@ -20120,18 +20119,45 @@ async function _runPickPhase() {
   if (ring) ring.remove();
   var settingsPanel = document.getElementById('shuffleSettingsPanel');
   if (settingsPanel) settingsPanel.remove();
-  // Gather tiles into center circle before pick phase
+  // Gather tiles into center circle before pick phase — hands pull inward
   _shufflePhysicsPointer.active = false;
   _shuffleGatherActive = true;
-  _shuffleAreaCenter.r = getRect().height * SP.areaRadius * SP.centerCircleRadius; // shrink boundary to center circle
+  _shuffleGatherStartTime = performance.now();
+  var gatherR = getRect().height * SP.areaRadius * SP.centerCircleRadius;
+  _shuffleAreaCenter.r = gatherR;
+
+  // Switch hands to "gather mode" — positioned outside perimeter, pulling in
+  var _gatherHandMode = true;
+  var ac = _shuffleAreaCenter;
+
+  // Override hand drawing for gather phase
+  _lastShuffleHandPositions = [
+    { x: ac.x - gatherR * 1.4, y: ac.y },
+    { x: ac.x + gatherR * 1.4, y: ac.y }
+  ];
+
   // Wait for tiles to gather into the center circle
   await new Promise(function(resolve) {
     var gatherStart = performance.now();
     var gatherCheck = setInterval(function() {
       var elapsed = performance.now() - gatherStart;
+
+      // Animate hands inward during gather
+      var t = Math.min(1, elapsed / (2000 / SPEED_MULTIPLIER));
+      var ease = t * t;
+      var startR = gatherR * 1.4;
+      var endR = gatherR * 0.6;
+      var currentR = startR - ease * (startR - endR);
+      _lastShuffleHandPositions = [
+        { x: ac.x - currentR, y: ac.y },
+        { x: ac.x + currentR, y: ac.y }
+      ];
+
       // Check if tiles are mostly inside center circle, or timeout after 2s
       if (elapsed > 2000 / SPEED_MULTIPLIER) {
         clearInterval(gatherCheck);
+        // Now cleanup hands
+        _cleanupShuffleHands();
         resolve();
       } else {
         var allInside = true;
