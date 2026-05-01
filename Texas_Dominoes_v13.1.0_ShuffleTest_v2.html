@@ -16630,12 +16630,12 @@ async function performShuffleAnimation() {
       _autoMixAI();
     }
 
-    // Auto-end shuffle after 3 seconds — go straight to pick (which does its own gather)
+    // Auto-end shuffle after 8 seconds (extended for hand tuning)
     setTimeout(function() {
       if (_shufflePhysicsActive && _shufflePhysicsResolve) {
         _endShuffleForPick();
       }
-    }, 3000 / SPEED_MULTIPLIER);
+    }, 8000);
   });
 }
 
