@@ -8939,15 +8939,8 @@ async function mpHandleDeal(move) {
     }
   }
 
-  // V11.4k: Animate deal or auto-deal based on setting
-  if (dealMode === 'pick') {
-    await animateDealFromCenter();
-  } else {
-    // Auto deal: flip local player's tiles face-up
-    for (const data of (sprites[mpSeat] || [])) {
-      if (data && data.sprite) data.sprite.setFaceUp(true);
-    }
-  }
+  // Always run shuffle + deal animation
+  await animateDealFromCenter();
 
   // Update scores
   if (GAME_MODE === 'MOON') {
@@ -25305,10 +25298,8 @@ async function mpHostDeal() {
     }
   }
 
-  // V11.4k: Animate deal or auto-deal based on setting
-  if (dealMode === 'pick') {
-    await animateDealFromCenter();
-  }
+  // Always run shuffle + deal animation
+  await animateDealFromCenter();
   // (mpHostDeal already sets face-up for host's tiles above)
 
   if (GAME_MODE !== 'MOON') {
