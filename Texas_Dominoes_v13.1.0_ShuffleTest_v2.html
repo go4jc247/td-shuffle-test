@@ -17350,35 +17350,46 @@ function _drawShuffleHandsOverlay() {
   var W = cvs.width, H = cvs.height;
   c.clearRect(0, 0, W, H);
 
-  // Collect active pointer positions from shuffle physics
-  var pointers = [];
+  // Build force points exactly like the physics loop does
   var ptr = _shufflePhysicsPointer;
-  if (ptr && (ptr.active || ptr.x !== 0 || ptr.y !== 0)) {
-    pointers.push({ x: ptr.x, y: ptr.y });
-  }
-  var tpKeys = Object.keys(_shuffleTouchPointers);
-  for (var i = 0; i < tpKeys.length; i++) {
-    var tp = _shuffleTouchPointers[tpKeys[i]];
-    if (tp) pointers.push({ x: tp.x, y: tp.y });
-  }
+  var ac = _shuffleAreaCenter;
+  var forcePoints = [];
 
-  // Fallback: if no pointers detected, draw at center area
-  if (pointers.length === 0) {
-    var ac = _shuffleAreaCenter;
-    if (ac && ac.x) {
-      pointers.push({ x: ac.x - ac.r * 0.3, y: ac.y });
-      pointers.push({ x: ac.x + ac.r * 0.3, y: ac.y });
+  if (ptr && ptr.active) {
+    if (ptr._isTouch) {
+      // Touch: all active touch pointers
+      var touchKeys = Object.keys(_shuffleTouchPointers);
+      for (var tk = 0; tk < touchKeys.length; tk++) {
+        var tp = _shuffleTouchPointers[touchKeys[tk]];
+        if (tp) forcePoints.push({ x: tp.x, y: tp.y });
+      }
+      if (forcePoints.length === 0) {
+        forcePoints.push({ x: ptr.x, y: ptr.y });
+      }
+    } else {
+      // Mouse: primary + 180° mirror around center
+      forcePoints.push({ x: ptr.x, y: ptr.y });
+      if (ac) {
+        forcePoints.push({ x: 2 * ac.x - ptr.x, y: 2 * ac.y - ptr.y });
+      }
+    }
+  } else {
+    // AI playback uses _shuffleTouchPointers with _pb keys
+    var pbKeys = Object.keys(_shuffleTouchPointers);
+    for (var pk = 0; pk < pbKeys.length; pk++) {
+      var pbp = _shuffleTouchPointers[pbKeys[pk]];
+      if (pbp) forcePoints.push({ x: pbp.x, y: pbp.y });
+    }
+    // If still nothing, draw at center
+    if (forcePoints.length === 0 && ac && ac.x) {
+      forcePoints.push({ x: ac.x - ac.r * 0.3, y: ac.y });
+      forcePoints.push({ x: ac.x + ac.r * 0.3, y: ac.y });
     }
   }
 
-  // Draw up to 2 hands
-  for (var h = 0; h < Math.min(2, pointers.length); h++) {
-    shDrawHand(c, pointers[h].x, pointers[h].y, h, W, H);
-  }
-
-  // If only 1 pointer, mirror the second hand
-  if (pointers.length === 1) {
-    shDrawHand(c, W - pointers[0].x, H - pointers[0].y, 1, W, H);
+  // Draw hands at influence locations
+  for (var h = 0; h < Math.min(2, forcePoints.length); h++) {
+    shDrawHand(c, forcePoints[h].x, forcePoints[h].y, h, W, H);
   }
 }
 
@@ -20995,7 +21006,7 @@ const SHUFFLE_RIGHT_HAND = new Path2D("M 1286 669 L 1286 661 L 1285 660 L 1282 6
 const SH_LEFT_WC = { x: 430.5, y: 707.0 };
 const SH_RIGHT_WC = { x: 1174.5, y: 746.5 };
 // Scale relative to viewport — sandbox was ~1200px wide, game is ~400px
-const SH_HAND_SCALE_BASE = 0.26;  // base scale at 1200px width (reduced ~35%)
+const SH_HAND_SCALE_BASE = 0.156;  // base scale at 1200px width (60% of 0.26)
 const SH_FOREARM_W_BASE = 69;    // base forearm width at 1200px
 const SH_SHOULDER_DEPTH = 1.32;
 const SH_SKIN_FILL = '#d4a574';
