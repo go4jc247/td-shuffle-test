@@ -21003,81 +21003,52 @@ function shDrawHand(c, wx, wy, index, W, H) {
 }
 
 // Shuffle animation: hands sweep over the center pile in oval paths
-async function shuffleWithHands(rect, pileCx, pileCy, pileSprites, SS) {
-  // Create canvas overlay inside gameWrapper
+// DEBUG: persistent hand canvas — stays visible until we confirm rendering works
+var _shuffleHandCanvas = null;
+function ensureShuffleHandCanvas() {
+  if (_shuffleHandCanvas) return _shuffleHandCanvas;
   const gameWrapper = document.getElementById('gameWrapper') || document.body;
-  const W = Math.round(gameWrapper.offsetWidth);
-  const H = Math.round(gameWrapper.offsetHeight);
+  const W = Math.round(gameWrapper.offsetWidth) || 414;
+  const H = Math.round(gameWrapper.offsetHeight) || 896;
   const cvs = document.createElement('canvas');
+  cvs.id = 'shuffleHandCanvas';
   cvs.width = W;
   cvs.height = H;
-  cvs.style.cssText = 'position:absolute;top:0;left:0;width:' + W + 'px;height:' + H + 'px;z-index:900;pointer-events:none;';
+  cvs.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;z-index:9999;pointer-events:none;';
   gameWrapper.appendChild(cvs);
+  _shuffleHandCanvas = cvs;
+  console.log('[SHUFFLE HANDS] Canvas created:', W, 'x', H);
+  return cvs;
+}
+
+// Draw hands at fixed positions for debugging
+function drawPersistentHands() {
+  const cvs = ensureShuffleHandCanvas();
   const c = cvs.getContext('2d');
+  const W = cvs.width, H = cvs.height;
+  c.clearRect(0, 0, W, H);
 
-  // Recalculate pile center relative to gameWrapper (not viewport)
-  const wrapperRect = gameWrapper.getBoundingClientRect();
-  const pcx = pileCx - wrapperRect.left;
-  const pcy = pileCy - wrapperRect.top;
+  // Draw left hand at 35% x, 45% y
+  shDrawHand(c, W * 0.35, H * 0.45, 0, W, H);
+  // Draw right hand at 65% x, 45% y
+  shDrawHand(c, W * 0.65, H * 0.45, 1, W, H);
 
-  // Oval paths for two hands sweeping around the pile
-  const lCX = pcx - W * 0.08;
-  const rCX = pcx + W * 0.08;
-  const rX = W * 0.18;  // oval width
-  const rY = H * 0.14;  // oval height
+  console.log('[SHUFFLE HANDS] Drew hands at', W * 0.35, H * 0.45, 'and', W * 0.65, H * 0.45);
+}
 
-  // Longer shuffle: 3 seconds total
-  const shuffleDuration = 3000;
-  const totalFrames = Math.round(shuffleDuration / 16.67); // ~60fps
-  const rotationsPerShuffle = 2;
-  const totalAngle = rotationsPerShuffle * (SS.reshuffleCount || 3) * Math.PI * 2;
+async function shuffleWithHands(rect, pileCx, pileCy, pileSprites, SS) {
+  const cvs = ensureShuffleHandCanvas();
+  const c = cvs.getContext('2d');
+  const W = cvs.width, H = cvs.height;
 
-  // Also reshuffle the sprite positions during the animation
-  const reshuffleInterval = Math.floor(totalFrames / (SS.reshuffleCount || 3));
+  // Draw hands persistently at center — they stay visible
+  drawPersistentHands();
 
-  let frame = 0;
-  await new Promise(resolve => {
-    function tick() {
-      if (frame >= totalFrames) {
-        cvs.remove();
-        resolve();
-        return;
-      }
+  // Wait 3 seconds so you can see them
+  await new Promise(r => setTimeout(r, 3000));
 
-      const prog = frame / totalFrames;
-      const speed = prog < 0.1 ? prog / 0.1 : prog > 0.85 ? (1 - prog) / 0.15 : 1.0;
-      const angle = prog * totalAngle;
-
-      // Left hand position
-      const lx = lCX + rX * Math.cos(angle);
-      const ly = pcy + rY * Math.sin(angle);
-      // Right hand position (opposite direction)
-      const rx = rCX + rX * Math.cos(-angle);
-      const ry = pcy + rY * Math.sin(-angle);
-
-      // Reshuffle sprite positions periodically
-      if (frame > 0 && frame % reshuffleInterval === 0) {
-        const spreadX = Math.min(SS.spreadXMax || 120, W * (SS.spreadXPct || 15) / 100);
-        const spreadY = Math.min(SS.spreadYMax || 80, H * (SS.spreadYPct || 10) / 100);
-        for (const sp of pileSprites) {
-          const nx = pileCx - 28 + (Math.random() * 2 - 1) * spreadX;
-          const ny = pileCy - 56 + (Math.random() * 2 - 1) * spreadY;
-          const nrz = Math.random() * 360;
-          sp.setPose({ x: nx, y: ny, s: SS.tileScale || 0.38, rz: nrz, ry: 0 });
-        }
-        SFX.playShuffle();
-      }
-
-      // Draw
-      c.clearRect(0, 0, W, H);
-      shDrawHand(c, lx, ly, 0, W, H);
-      shDrawHand(c, rx, ry, 1, W, H);
-
-      frame++;
-      requestAnimationFrame(tick);
-    }
-    requestAnimationFrame(tick);
-  });
+  // Don't remove canvas — leave it visible for debugging
+  console.log('[SHUFFLE HANDS] Shuffle phase done, hands still visible');
 }
 
 // Deal animation: create sprites at center, animate to hand positions
