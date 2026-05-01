@@ -21041,6 +21041,12 @@ function drawPersistentHands() {
   console.log('[SHUFFLE HANDS] Drew hands at', W * 0.35, H * 0.45, 'and', W * 0.65, H * 0.45);
 }
 
+// AUTO-DRAW: show hands 2 seconds after page load for debugging
+setTimeout(function() {
+  console.log('[SHUFFLE HANDS] Auto-drawing hands on load...');
+  drawPersistentHands();
+}, 2000);
+
 async function shuffleWithHands(rect, pileCx, pileCy, pileSprites, SS) {
   const cvs = ensureShuffleHandCanvas();
   const c = cvs.getContext('2d');
