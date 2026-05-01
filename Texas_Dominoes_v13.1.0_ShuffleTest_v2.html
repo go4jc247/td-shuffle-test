@@ -16962,6 +16962,7 @@ function _startShufflePhysics() {
   if (_shufflePhysicsActive) return;
   _shufflePhysicsActive = true;
   _shuffleHandsActive = true;
+  _lastShuffleHandPositions = null;
   _shuffleGatherActive = false;
 
   // Ensure table UI is hidden during shuffle
@@ -17335,6 +17336,7 @@ function _shufflePhysicsLoop() {
 }
 
 var _shuffleHandsActive = true; // flag to stop drawing after shuffle ends
+var _lastShuffleHandPositions = null; // persist hand positions through pointer gaps
 
 // Render hands on a canvas overlay during shuffle physics
 function _drawShuffleHandsOverlay() {
@@ -17366,7 +17368,6 @@ function _drawShuffleHandsOverlay() {
 
   if (ptr && ptr.active) {
     if (ptr._isTouch) {
-      // Touch: all active touch pointers
       var touchKeys = Object.keys(_shuffleTouchPointers);
       for (var tk = 0; tk < touchKeys.length; tk++) {
         var tp = _shuffleTouchPointers[touchKeys[tk]];
@@ -17376,33 +17377,42 @@ function _drawShuffleHandsOverlay() {
         forcePoints.push({ x: ptr.x, y: ptr.y });
       }
     } else {
-      // Mouse: primary + 180° mirror around center
       forcePoints.push({ x: ptr.x, y: ptr.y });
       if (ac) {
         forcePoints.push({ x: 2 * ac.x - ptr.x, y: 2 * ac.y - ptr.y });
       }
     }
   } else {
-    // AI playback uses _shuffleTouchPointers with _pb keys
+    // AI playback or idle — check all touch pointers
     var pbKeys = Object.keys(_shuffleTouchPointers);
     for (var pk = 0; pk < pbKeys.length; pk++) {
       var pbp = _shuffleTouchPointers[pbKeys[pk]];
       if (pbp) forcePoints.push({ x: pbp.x, y: pbp.y });
     }
-    // If still nothing, draw at center
-    if (forcePoints.length === 0 && ac && ac.x) {
-      forcePoints.push({ x: ac.x - ac.r * 0.3, y: ac.y });
-      forcePoints.push({ x: ac.x + ac.r * 0.3, y: ac.y });
+  }
+
+  // Update last known positions when we have data, otherwise keep previous
+  if (forcePoints.length > 0) {
+    _lastShuffleHandPositions = forcePoints.slice(0, 2);
+  }
+
+  // Use last known positions (persists through pointer gaps)
+  var drawPoints = _lastShuffleHandPositions;
+  if (!drawPoints || drawPoints.length === 0) {
+    // Fallback to center
+    if (ac && ac.x) {
+      drawPoints = [{ x: ac.x - ac.r * 0.3, y: ac.y }, { x: ac.x + ac.r * 0.3, y: ac.y }];
+    } else {
+      return;
     }
   }
 
   // Draw hands at influence locations
-  // 2 influencers: one hand each. 1 influencer: right hand only.
-  if (forcePoints.length >= 2) {
-    shDrawHand(c, forcePoints[0].x, forcePoints[0].y, 0, W, H);
-    shDrawHand(c, forcePoints[1].x, forcePoints[1].y, 1, W, H);
-  } else if (forcePoints.length === 1) {
-    shDrawHand(c, forcePoints[0].x, forcePoints[0].y, 1, W, H);
+  if (drawPoints.length >= 2) {
+    shDrawHand(c, drawPoints[0].x, drawPoints[0].y, 0, W, H);
+    shDrawHand(c, drawPoints[1].x, drawPoints[1].y, 1, W, H);
+  } else if (drawPoints.length === 1) {
+    shDrawHand(c, drawPoints[0].x, drawPoints[0].y, 1, W, H);
   }
 }
 
