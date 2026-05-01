@@ -17388,8 +17388,12 @@ function _drawShuffleHandsOverlay() {
   }
 
   // Draw hands at influence locations
-  for (var h = 0; h < Math.min(2, forcePoints.length); h++) {
-    shDrawHand(c, forcePoints[h].x, forcePoints[h].y, h, W, H);
+  // 2 influencers: one hand each. 1 influencer: right hand only.
+  if (forcePoints.length >= 2) {
+    shDrawHand(c, forcePoints[0].x, forcePoints[0].y, 0, W, H);
+    shDrawHand(c, forcePoints[1].x, forcePoints[1].y, 1, W, H);
+  } else if (forcePoints.length === 1) {
+    shDrawHand(c, forcePoints[0].x, forcePoints[0].y, 1, W, H);
   }
 }
 
@@ -17398,8 +17402,52 @@ var _origEndShuffleForPick = typeof _endShuffleForPick === 'function' ? _endShuf
 
 function _cleanupShuffleHands() {
   var cvs = document.getElementById('shuffleHandCanvas');
-  if (cvs) cvs.remove();
-  _shuffleHandCanvas = null;
+  if (!cvs) return;
+  var c = cvs.getContext('2d');
+  var W = cvs.width, H = cvs.height;
+
+  // Animate hands sliding off-screen downward
+  var startY = H * 0.4;
+  var endY = H + 200;
+  var duration = 400; // ms
+  var startTime = performance.now();
+
+  // Capture last known hand positions
+  var lastForcePoints = [];
+  var ptr = _shufflePhysicsPointer;
+  var ac = _shuffleAreaCenter;
+  var tpKeys = Object.keys(_shuffleTouchPointers);
+  for (var i = 0; i < tpKeys.length; i++) {
+    var tp = _shuffleTouchPointers[tpKeys[i]];
+    if (tp) lastForcePoints.push({ x: tp.x, y: tp.y });
+  }
+  if (lastForcePoints.length === 0 && ac && ac.x) {
+    lastForcePoints.push({ x: ac.x - ac.r * 0.3, y: ac.y });
+    lastForcePoints.push({ x: ac.x + ac.r * 0.3, y: ac.y });
+  }
+
+  function animateOff(now) {
+    var elapsed = now - startTime;
+    var t = Math.min(1, elapsed / duration);
+    var ease = t * t; // ease-in
+    var offsetY = ease * (endY - startY);
+
+    c.clearRect(0, 0, W, H);
+    if (lastForcePoints.length >= 2) {
+      shDrawHand(c, lastForcePoints[0].x, lastForcePoints[0].y + offsetY, 0, W, H);
+      shDrawHand(c, lastForcePoints[1].x, lastForcePoints[1].y + offsetY, 1, W, H);
+    } else if (lastForcePoints.length === 1) {
+      shDrawHand(c, lastForcePoints[0].x, lastForcePoints[0].y + offsetY, 1, W, H);
+    }
+
+    if (t < 1) {
+      requestAnimationFrame(animateOff);
+    } else {
+      cvs.remove();
+      _shuffleHandCanvas = null;
+    }
+  }
+  requestAnimationFrame(animateOff);
 }
 
 function _createShuffleUI(rect) {
