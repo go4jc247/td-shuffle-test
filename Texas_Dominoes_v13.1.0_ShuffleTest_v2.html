@@ -17338,7 +17338,12 @@ var _shuffleHandsActive = true; // flag to stop drawing after shuffle ends
 
 // Render hands on a canvas overlay during shuffle physics
 function _drawShuffleHandsOverlay() {
-  if (!_shuffleHandsActive) return;
+  if (!_shuffleHandsActive || !_shufflePhysicsActive || _shuffleGatherActive) {
+    // If hands should be gone, remove canvas if it exists
+    var old = document.getElementById('shuffleHandCanvas');
+    if (old) { old.remove(); _shuffleHandCanvas = null; }
+    return;
+  }
   var cvs = document.getElementById('shuffleHandCanvas');
   if (!cvs) {
     var gw = document.getElementById('gameWrapper');
