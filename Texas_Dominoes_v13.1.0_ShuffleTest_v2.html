@@ -16961,6 +16961,7 @@ function _setShuffleTableUI(visible) {
 function _startShufflePhysics() {
   if (_shufflePhysicsActive) return;
   _shufflePhysicsActive = true;
+  _shuffleHandsActive = true;
   _shuffleGatherActive = false;
 
   // Ensure table UI is hidden during shuffle
@@ -17333,8 +17334,11 @@ function _shufflePhysicsLoop() {
   _shufflePhysicsRAF = requestAnimationFrame(_shufflePhysicsLoop);
 }
 
+var _shuffleHandsActive = true; // flag to stop drawing after shuffle ends
+
 // Render hands on a canvas overlay during shuffle physics
 function _drawShuffleHandsOverlay() {
+  if (!_shuffleHandsActive) return;
   var cvs = document.getElementById('shuffleHandCanvas');
   if (!cvs) {
     var gw = document.getElementById('gameWrapper');
@@ -17401,6 +17405,7 @@ function _drawShuffleHandsOverlay() {
 var _origEndShuffleForPick = typeof _endShuffleForPick === 'function' ? _endShuffleForPick : null;
 
 function _cleanupShuffleHands() {
+  _shuffleHandsActive = false;
   var cvs = document.getElementById('shuffleHandCanvas');
   if (!cvs) return;
   var c = cvs.getContext('2d');
